@@ -39,6 +39,12 @@ export class Scanner {
   exposure = 0;
   private prev: TransformMap = new Map();
 
+  /** Pause the bar without ending the pass (the hold key). */
+  hold = false;
+  /** Sweep continuously, rewriting the output each pass, until captured. */
+  loop = false;
+  private captureNext = false;
+
   state: ScanState = 'idle';
   /** Rows (along the scan axis) the bar has travelled this pass, 0..length. */
   pos = 0;
@@ -91,9 +97,15 @@ export class Scanner {
   start(): void {
     this.pos = 0;
     this.written = 0;
+    this.captureNext = false;
     this.applyFidelity();
     this.clearOutput();
     this.state = 'scanning';
+  }
+
+  /** In loop mode: let the current pass finish, then freeze it. */
+  capture(): void {
+    this.captureNext = true;
   }
 
   private applyFidelity(): void {
@@ -117,7 +129,7 @@ export class Scanner {
 
   /** Advance the bar by dt milliseconds and freeze the rows it covered. */
   tick(dt: number): void {
-    if (this.state !== 'scanning') {
+    if (this.state !== 'scanning' || this.hold) {
       this.snapshot();
       return;
     }
@@ -133,8 +145,15 @@ export class Scanner {
     this.snapshot();
 
     if (this.pos >= len) {
-      this.state = 'done';
-      this.onEnd?.();
+      if (this.loop && !this.captureNext) {
+        // Next pass overwrites the output row by row; nothing is cleared.
+        this.pos = 0;
+        this.written = 0;
+      } else {
+        this.state = 'done';
+        this.captureNext = false;
+        this.onEnd?.();
+      }
     }
   }
 

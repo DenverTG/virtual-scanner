@@ -33,8 +33,11 @@ ui.syncScanSettings();
 new Input(ui.glassView, glass, {
   onChange: () => {},
   onGestureEnd: () => {},
-  onSelect: () => {},
+  onSelect: () => ui.syncButtons(),
 });
+
+// Debug handle for the console and for browser tests.
+(window as unknown as { scan: unknown }).scan = { glass, scanner, panel };
 
 let last = performance.now();
 function frame(now: number): void {

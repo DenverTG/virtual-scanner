@@ -6,11 +6,13 @@ import type { Glass } from './glass';
 import type { Scanner } from './scanner';
 import { Effects, type EffectParams } from './effects';
 import type { Panel } from './panel';
+import { handlePos, HANDLE_RADIUS_CSS } from './input';
 
 export interface UIDeps {
   glass: Glass;
   scanner: Scanner;
   panel: Panel;
+  /** Images were added, removed, reordered or nudged; a good moment to record undo state. */
   onImagesChanged: () => void;
 }
 
@@ -29,6 +31,10 @@ export class UI {
   private scanBtn!: HTMLButtonElement;
   private lidBtn!: HTMLButtonElement;
   private dirBtn!: HTMLButtonElement;
+  private revBtn!: HTMLButtonElement;
+  private loopBtn!: HTMLButtonElement;
+  private captureBtn!: HTMLButtonElement;
+  private selButtons: HTMLButtonElement[] = [];
   private tabButtons: HTMLButtonElement[] = [];
   private mobileTab: 'glass' | 'output' = 'glass';
   private outputDirty = true;
@@ -105,9 +111,27 @@ export class UI {
       this.updateEffectParams();
     });
 
+    this.revBtn = button('Reverse', () => {
+      this.deps.scanner.reverse = !this.deps.scanner.reverse;
+      this.syncButtons();
+    });
+    this.loopBtn = button('Loop', () => {
+      this.deps.scanner.loop = !this.deps.scanner.loop;
+      this.syncButtons();
+    });
+    this.loopBtn.title = 'Sweep continuously; Capture freezes the current pass';
     this.scanBtn = button('Scan', () => this.toggleScan());
     this.scanBtn.classList.add('primary');
+    this.captureBtn = button('Capture', () => {
+      this.deps.scanner.capture();
+      this.captureBtn.disabled = true;
+    });
     const save = button('Save PNG', () => this.savePng());
+
+    const fwd = button('Forward', () => this.withSelected((id) => this.deps.glass.bringForward(id)));
+    const back = button('Back', () => this.withSelected((id) => this.deps.glass.sendBack(id)));
+    const del = button('Delete', () => this.withSelected((id) => this.deps.glass.remove(id)));
+    this.selButtons = [fwd, back, del];
 
     const tabs = document.createElement('span');
     tabs.className = 'tabs';
@@ -116,16 +140,36 @@ export class UI {
     tabs.append(tabGlass, tabOut);
     this.tabButtons = [tabGlass, tabOut];
 
-    bar.append(open, sep(), this.lidBtn, this.dirBtn, sep(), this.scanBtn, save, spacer(), tabs);
+    bar.append(
+      open, fwd, back, del, sep(),
+      this.lidBtn, this.dirBtn, this.revBtn, this.loopBtn, sep(),
+      this.scanBtn, this.captureBtn, save, spacer(), tabs,
+    );
+    this.setupKeyboard();
     return bar;
+  }
+
+  private withSelected(fn: (id: number) => void): void {
+    const id = this.deps.glass.selectedId;
+    if (id === null) return;
+    fn(id);
+    this.hint.hidden = this.deps.glass.images.length > 0;
+    this.deps.onImagesChanged();
+    this.syncButtons();
   }
 
   syncButtons(): void {
     const { glass, scanner } = this.deps;
     this.lidBtn.textContent = glass.lidClosed ? 'Lid: closed' : 'Lid: open';
-    this.dirBtn.textContent = scanner.direction === 'vertical' ? 'Sweep: down' : 'Sweep: right';
+    const arrow = scanner.direction === 'vertical' ? (scanner.reverse ? 'up' : 'down') : (scanner.reverse ? 'left' : 'right');
+    this.dirBtn.textContent = `Sweep: ${arrow}`;
+    this.revBtn.classList.toggle('on', scanner.reverse);
+    this.loopBtn.classList.toggle('on', scanner.loop);
     this.scanBtn.textContent = scanner.scanning ? 'Stop' : 'Scan';
     this.scanBtn.classList.toggle('primary', !scanner.scanning);
+    this.captureBtn.hidden = !(scanner.loop && scanner.scanning);
+    this.captureBtn.disabled = false;
+    for (const b of this.selButtons) b.disabled = glass.selectedId === null;
     this.tabButtons[0]?.classList.toggle('on', this.mobileTab === 'glass');
     this.tabButtons[1]?.classList.toggle('on', this.mobileTab === 'output');
   }
@@ -160,6 +204,74 @@ export class UI {
     this.glassPane.classList.toggle('hidden', this.mobileTab !== 'glass');
     this.outputPane.classList.toggle('hidden', this.mobileTab !== 'output');
   }
+
+  // ---- keyboard --------------------------------------------------------
+
+  private setupKeyboard(): void {
+    const { glass, scanner } = this.deps;
+    window.addEventListener('keydown', (e) => {
+      const t = e.target as HTMLElement | null;
+      const typing = t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA');
+      if (typing && !(t as HTMLInputElement).type?.match(/checkbox|range/)) {
+        if (e.key === 'Escape') (t as HTMLElement).blur();
+        return;
+      }
+      const sel = glass.selected;
+      switch (e.key) {
+        case ' ':
+          e.preventDefault();
+          this.toggleScan();
+          break;
+        case 'h':
+        case 'H':
+          scanner.hold = true;
+          break;
+        case 'ArrowLeft':
+        case 'ArrowRight':
+        case 'ArrowUp':
+        case 'ArrowDown': {
+          if (!sel) return;
+          e.preventDefault();
+          const step = e.shiftKey ? 10 : 1;
+          if (e.key === 'ArrowLeft') sel.x -= step;
+          if (e.key === 'ArrowRight') sel.x += step;
+          if (e.key === 'ArrowUp') sel.y -= step;
+          if (e.key === 'ArrowDown') sel.y += step;
+          this.nudged = true;
+          break;
+        }
+        case 'Delete':
+        case 'Backspace':
+          if (sel) {
+            e.preventDefault();
+            this.withSelected((id) => glass.remove(id));
+          }
+          break;
+        case ']':
+          this.withSelected((id) => glass.bringForward(id));
+          break;
+        case '[':
+          this.withSelected((id) => glass.sendBack(id));
+          break;
+        case 'Escape':
+          glass.selectedId = null;
+          this.syncButtons();
+          break;
+        default:
+          return;
+      }
+    });
+    window.addEventListener('keyup', (e) => {
+      if (e.key === 'h' || e.key === 'H') scanner.hold = false;
+      if (e.key.startsWith('Arrow') && this.nudged) {
+        this.nudged = false;
+        this.deps.onImagesChanged();
+      }
+    });
+    window.addEventListener('blur', () => { scanner.hold = false; });
+  }
+
+  private nudged = false;
 
   // ---- mobile bottom sheet ---------------------------------------------
 
@@ -248,6 +360,7 @@ export class UI {
     }
     this.hint.hidden = this.deps.glass.images.length > 0;
     this.deps.onImagesChanged();
+    this.syncButtons();
   }
 
   savePng(): void {
@@ -334,6 +447,26 @@ export class UI {
       ctx.strokeStyle = '#ffd23f';
       ctx.strokeRect(-sel.w / 2, -sel.h / 2, sel.w, sel.h);
       ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+      // Rotation handle: a stalk from the top edge to a ring.
+      const dpr = window.devicePixelRatio || 1;
+      const cssPerGlass = this.glassView.clientWidth / glass.width;
+      const h = handlePos(sel, 1 / cssPerGlass);
+      const c = Math.cos(sel.rotation);
+      const sn = Math.sin(sel.rotation);
+      const top = -(sel.h / 2) * sel.scale;
+      const tx = sel.x - sn * top;
+      const ty = sel.y + c * top;
+      ctx.lineWidth = 1.5 * dpr;
+      ctx.beginPath();
+      ctx.moveTo(tx * scale, ty * scale);
+      ctx.lineTo(h.x * scale, h.y * scale);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(h.x * scale, h.y * scale, HANDLE_RADIUS_CSS * dpr, 0, Math.PI * 2);
+      ctx.fillStyle = '#161616';
+      ctx.fill();
+      ctx.stroke();
     }
 
     if (scanner.state !== 'idle') {

@@ -44,6 +44,17 @@ export interface InputEvents {
 
 const MIN_SCALE = 0.01;
 const MAX_SCALE = 64;
+/** Distance of the rotation handle above the image's top edge, in CSS px. */
+export const HANDLE_OFFSET_CSS = 28;
+export const HANDLE_RADIUS_CSS = 9;
+
+/** Glass position of the rotation handle for an image. */
+export function handlePos(img: GlassImage, glassPerCss: number): Pointer {
+  const up = -(img.h / 2) * img.scale - HANDLE_OFFSET_CSS * glassPerCss;
+  const c = Math.cos(img.rotation);
+  const s = Math.sin(img.rotation);
+  return { x: img.x - s * up, y: img.y + c * up };
+}
 
 export class Input {
   private readonly canvas: HTMLCanvasElement;
@@ -93,6 +104,24 @@ export class Input {
       return;
     }
     if (this.pointers.size > 2) return;
+
+    // The rotation handle of the selected image sits on top of everything.
+    const sel = this.glass.selected;
+    if (sel) {
+      const h = handlePos(sel, this.glassPerCss());
+      const r = (HANDLE_RADIUS_CSS + 6) * this.glassPerCss();
+      if (Math.hypot(p.x - h.x, p.y - h.y) <= r) {
+        this.drag = {
+          img: sel,
+          mode: 'rotate',
+          offX: 0,
+          offY: 0,
+          startAngle: Math.atan2(p.y - sel.y, p.x - sel.x),
+          startRot: sel.rotation,
+        };
+        return;
+      }
+    }
 
     const img = this.glass.hitTest(p.x, p.y);
     if (img && img.id !== this.glass.selectedId) {
