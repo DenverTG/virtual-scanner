@@ -23,6 +23,7 @@ export type PanelState = Record<string, number | boolean>;
 export const CONTROLS: Control[] = [
   // Scan — the loop reads these; they take effect on the next pass.
   { id: 'speed', label: 'Speed', group: 'Scan', type: 'range', min: 0.5, max: 60, step: 0.5, default: 8, unit: 's/pass' },
+  { id: 'exposure', label: 'Exposure', group: 'Scan', type: 'range', min: 0, max: 1, step: 0.01, default: 0, help: 'Motion blur while a row is captured. 0 = point sample, 1 = full frame-to-frame smear.' },
   { id: 'fidelity', label: 'Fidelity', group: 'Scan', type: 'range', min: 25, max: 600, step: 5, default: 300, unit: 'dpi', help: 'Sample resolution of the scan head. Next pass.' },
 
   // Light.
@@ -80,7 +81,7 @@ export interface Mode {
 export const MODES: Mode[] = [
   { name: 'Manual', builtin: true, values: {} },
   { name: 'Early copier', builtin: true, values: {
-    fidelity: 150, speed: 10,
+    fidelity: 150, speed: 10, exposure: 0.35,
     black: 0.1, white: 0.9, gamma: 1,
     threshOn: true, thresh: 0.5, threshSoft: 0,
     roughOn: true, rough: 0.35,
@@ -104,7 +105,7 @@ export const MODES: Mode[] = [
     dropOn: true, dropout: 0.45,
   } },
   { name: 'Flatbed CCD', builtin: true, values: {
-    fidelity: 400, speed: 8,
+    fidelity: 400, speed: 8, exposure: 0.7,
     black: 0.12, white: 0.82, gamma: 0.9,
     grainOn: true, grain: 0.55, grainSize: 1,
     jitterOn: true, jitter: 0.08,

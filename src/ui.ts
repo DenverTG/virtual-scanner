@@ -146,6 +146,7 @@ export class UI {
     const { scanner, panel } = this.deps;
     scanner.secondsPerPass = panel.get<number>('speed');
     scanner.fidelityDpi = panel.get<number>('fidelity');
+    scanner.exposure = panel.get<number>('exposure');
   }
 
   private setMobileTab(tab: 'glass' | 'output'): void {

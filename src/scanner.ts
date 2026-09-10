@@ -5,7 +5,8 @@
 // the same rows, and never touched again. That is the entire warp effect.
 // Everything here is drawImage with source/dest rects; no per-pixel work.
 
-import type { Glass } from './glass';
+import type { Glass, Transform, TransformMap } from './glass';
+import { snapshotTransform } from './glass';
 
 export type Direction = 'vertical' | 'horizontal';
 export type ScanState = 'idle' | 'scanning' | 'done';
@@ -30,6 +31,13 @@ export class Scanner {
   fidelityDpi = 300;
   /** Sample px per output px for the pass in progress (<= 1). */
   private sampleScale = 1;
+  /**
+   * Exposure blur. A real head integrates light while it captures a row, so
+   * a fast-moving page smears along its motion. 0 = point sample one
+   * transform per frame, 1 = blend the whole frame-to-frame motion.
+   */
+  exposure = 0;
+  private prev: TransformMap = new Map();
 
   state: ScanState = 'idle';
   /** Rows (along the scan axis) the bar has travelled this pass, 0..length. */
@@ -109,7 +117,10 @@ export class Scanner {
 
   /** Advance the bar by dt milliseconds and freeze the rows it covered. */
   tick(dt: number): void {
-    if (this.state !== 'scanning') return;
+    if (this.state !== 'scanning') {
+      this.snapshot();
+      return;
+    }
     const len = this.length;
     const rate = len / Math.max(0.05, this.secondsPerPass); // rows per second
     this.pos = Math.min(len, this.pos + (dt / 1000) * rate);
@@ -119,11 +130,62 @@ export class Scanner {
       this.copyStrip(this.written, to);
       this.written = to;
     }
+    this.snapshot();
 
     if (this.pos >= len) {
       this.state = 'done';
       this.onEnd?.();
     }
+  }
+
+  /** Remember where every image was this frame, for the next frame's exposure blur. */
+  private snapshot(): void {
+    this.prev.clear();
+    for (const img of this.glass.images) this.prev.set(img.id, snapshotTransform(img));
+  }
+
+  /** True if any image moved since the last snapshot. */
+  private moved(): boolean {
+    for (const img of this.glass.images) {
+      const p = this.prev.get(img.id);
+      if (!p) continue;
+      if (p.x !== img.x || p.y !== img.y || p.scale !== img.scale || p.rotation !== img.rotation) return true;
+    }
+    return false;
+  }
+
+  /** Transforms interpolated between the previous frame (t=0) and now (t=1). */
+  private between(t: number): TransformMap {
+    const m: TransformMap = new Map();
+    for (const img of this.glass.images) {
+      const p = this.prev.get(img.id);
+      if (!p) continue;
+      const tr: Transform = {
+        x: p.x + (img.x - p.x) * t,
+        y: p.y + (img.y - p.y) * t,
+        scale: p.scale + (img.scale - p.scale) * t,
+        rotation: p.rotation + (img.rotation - p.rotation) * t,
+      };
+      m.set(img.id, tr);
+    }
+    return m;
+  }
+
+  /** Render the glass into the sample canvas, blending sub-frames when exposure is on. */
+  private renderSample(k: number): void {
+    const s = this.sctx;
+    if (this.exposure <= 0 || !this.moved()) {
+      this.glass.render(s, k);
+      return;
+    }
+    const n = 4;
+    for (let i = 0; i < n; i++) {
+      const t = 1 - this.exposure * (1 - i / (n - 1));
+      // Drawing layer i with alpha 1/(i+1) leaves an equal-weight average.
+      s.globalAlpha = 1 / (i + 1);
+      this.glass.render(s, k, this.between(t));
+    }
+    s.globalAlpha = 1;
   }
 
   /** Copy axis rows [from, to) of the current glass into the output. */
@@ -148,7 +210,7 @@ export class Scanner {
     s.beginPath();
     s.rect(Math.floor(x * k) - 1, Math.floor(y * k) - 1, Math.ceil(w * k) + 2, Math.ceil(h * k) + 2);
     s.clip();
-    this.glass.render(s, k);
+    this.renderSample(k);
     s.restore();
 
     this.octx.imageSmoothingEnabled = k >= 1;
