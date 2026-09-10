@@ -26,13 +26,15 @@ ui = new UI(document.getElementById('app')!, {
   glass,
   scanner,
   panel,
-  onImagesChanged: () => {},
+  onImagesChanged: () => ui.commit(),
 });
 ui.syncScanSettings();
+ui.restoreSize();
+ui.commit();
 
 new Input(ui.glassView, glass, {
   onChange: () => {},
-  onGestureEnd: () => {},
+  onGestureEnd: () => ui.commit(),
   onSelect: () => ui.syncButtons(),
 });
 

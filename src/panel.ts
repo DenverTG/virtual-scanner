@@ -217,6 +217,73 @@ export class Panel {
     this.refresh();
   }
 
+  /** Everything needed to reproduce a look: the state, the mode name and the custom modes. */
+  toJSON(): { version: number; mode: string; state: PanelState; modes: Mode[] } {
+    return {
+      version: 1,
+      mode: this.modeName,
+      state: { ...this.state },
+      modes: this.modes.filter((m) => !m.builtin),
+    };
+  }
+
+  exportJSON(): void {
+    const blob = new Blob([JSON.stringify(this.toJSON(), null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `scanner-${slug(this.modeName)}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  }
+
+  importJSON(): void {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'application/json,.json';
+    input.addEventListener('change', async () => {
+      const f = input.files?.[0];
+      if (!f) return;
+      try {
+        this.fromJSON(JSON.parse(await f.text()));
+      } catch (err) {
+        window.alert('Could not read that file: ' + (err instanceof Error ? err.message : String(err)));
+      }
+    });
+    input.click();
+  }
+
+  /** Accepts a full export, a bare state object, or a single mode {name, values}. */
+  fromJSON(data: unknown): void {
+    if (!data || typeof data !== 'object') throw new Error('not a JSON object');
+    const d = data as { state?: unknown; modes?: unknown; mode?: unknown; name?: unknown; values?: unknown };
+    if (Array.isArray(d.modes)) {
+      for (const m of d.modes as Mode[]) {
+        if (m && typeof m.name === 'string' && m.values && typeof m.values === 'object') {
+          this.modes = this.modes.filter((x) => x.name !== m.name || x.builtin);
+          this.modes.push({ name: m.name, values: sanitize(m.values as PanelState) });
+        }
+      }
+    }
+    if (typeof d.name === 'string' && d.values && typeof d.values === 'object') {
+      this.modes = this.modes.filter((x) => x.name !== d.name || x.builtin);
+      this.modes.push({ name: d.name, values: sanitize(d.values as PanelState) });
+      this.load(applyMode(this.modes[this.modes.length - 1]), d.name);
+      return;
+    }
+    if (d.state && typeof d.state === 'object') {
+      const name = typeof d.mode === 'string' && this.modes.some((m) => m.name === d.mode) ? d.mode : 'Manual';
+      this.load(sanitize(d.state as PanelState), name);
+      return;
+    }
+    if (!('modes' in d)) {
+      // A bare state object.
+      this.load(sanitize(d as PanelState), 'Manual');
+      return;
+    }
+    this.persist();
+    this.refresh();
+  }
+
   private currentMode(): Mode | undefined {
     return this.modes.find((m) => m.name === this.modeName);
   }
@@ -248,8 +315,14 @@ export class Panel {
     });
     const delBtn = btn('Delete', () => this.deleteMode(this.modeName));
     delBtn.className = 'mode-delete';
+    const exportBtn = btn('Export', () => this.exportJSON());
+    exportBtn.title = 'Download the current settings and custom modes as JSON';
+    const importBtn = btn('Import', () => this.importJSON());
+    importBtn.title = 'Load settings or modes from a JSON file';
     head.append(this.modeSelect, this.modeDot, saveBtn, delBtn);
-    root.appendChild(head);
+    const tools = el('div', 'panel-tools');
+    tools.append(exportBtn, importBtn);
+    root.append(head, tools);
     this.modeDelete = delBtn;
 
     for (const g of GROUPS) {
@@ -338,7 +411,7 @@ export class Panel {
       this.modeSelect.appendChild(opt);
     }
     this.modeSelect.value = this.modeName;
-    this.modeDelete.hidden = this.currentMode()?.builtin !== false;
+    this.modeDelete.hidden = this.currentMode()?.builtin === true;
     for (const r of this.rows.values()) r.update();
     this.refreshStages();
     this.refreshModeDot();
@@ -364,6 +437,20 @@ function loadCustomModes(): Mode[] {
   const arr = loadJSON<Mode[]>(STORAGE_MODES);
   if (!Array.isArray(arr)) return [];
   return arr.filter((m) => m && typeof m.name === 'string' && typeof m.values === 'object').map((m) => ({ name: m.name, values: m.values }));
+}
+
+/** Keep only known control ids with values of the right type. */
+function sanitize(values: PanelState): PanelState {
+  const out: PanelState = {};
+  for (const c of CONTROLS) {
+    const v = values[c.id];
+    if (c.type === 'stage' ? typeof v === 'boolean' : typeof v === 'number' && Number.isFinite(v)) out[c.id] = v;
+  }
+  return out;
+}
+
+function slug(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'settings';
 }
 
 function loadJSON<T>(key: string): T | null {

@@ -48,6 +48,13 @@ html, body {
 }
 
 .toolbar .spacer { flex: 1; }
+.toolbar .size-info { color: var(--muted); white-space: nowrap; }
+.toolbar .custom-size { display: inline-flex; align-items: center; gap: 3px; color: var(--muted); }
+.toolbar .custom-size input { width: 4.5em; }
+.panel-tools { display: flex; gap: 6px; padding: 8px 0 0; }
+.panel-tools button { flex: 1; }
+.pane { touch-action: none; }
+body { touch-action: manipulation; }
 
 .toolbar label {
   display: inline-flex;

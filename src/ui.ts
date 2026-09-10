@@ -2,7 +2,7 @@
 // mapping, the effect chain or the panel: toolbar, panes, file loading,
 // view drawing, the mobile sheet and saving.
 
-import type { Glass } from './glass';
+import { snapshotGlass, restoreGlass, type Glass, type GlassSnapshot } from './glass';
 import type { Scanner } from './scanner';
 import { Effects, type EffectParams } from './effects';
 import type { Panel } from './panel';
@@ -35,6 +35,12 @@ export class UI {
   private loopBtn!: HTMLButtonElement;
   private captureBtn!: HTMLButtonElement;
   private selButtons: HTMLButtonElement[] = [];
+  private undoBtn!: HTMLButtonElement;
+  private sizeSelect!: HTMLSelectElement;
+  private sizeInfo!: HTMLElement;
+  private customSize!: HTMLElement;
+  private history: GlassSnapshot[] = [];
+  private static readonly MAX_HISTORY = 100;
   private tabButtons: HTMLButtonElement[] = [];
   private mobileTab: 'glass' | 'output' = 'glass';
   private outputDirty = true;
@@ -85,6 +91,8 @@ export class UI {
     deps.scanner.onEnd = () => this.syncButtons();
 
     window.addEventListener('resize', () => this.layout());
+    window.addEventListener('orientationchange', () => setTimeout(() => this.layout(), 300));
+    window.visualViewport?.addEventListener('resize', () => this.layout());
     this.setupFileLoading();
     this.applyMobileTab();
     this.layout();
@@ -128,6 +136,30 @@ export class UI {
     });
     const save = button('Save PNG', () => this.savePng());
 
+    this.undoBtn = button('Undo', () => this.undo());
+    this.undoBtn.title = 'Undo image placement (Ctrl+Z). Scans are not undone; re-scan instead.';
+
+    this.sizeSelect = document.createElement('select');
+    this.sizeSelect.title = 'Output size';
+    for (const p of SIZE_PRESETS) {
+      const o = document.createElement('option');
+      o.value = p.id;
+      o.textContent = p.label;
+      this.sizeSelect.appendChild(o);
+    }
+    this.sizeSelect.addEventListener('change', () => this.onSizePreset());
+    this.sizeInfo = document.createElement('span');
+    this.sizeInfo.className = 'size-info';
+    this.customSize = document.createElement('span');
+    this.customSize.className = 'custom-size';
+    this.customSize.hidden = true;
+    const cw = numberInput('w', 256, 8192);
+    const chh = numberInput('h', 256, 8192);
+    const cd = numberInput('dpi', 36, 1200);
+    const apply = button('Apply', () => this.setSize(Number(cw.value), Number(chh.value), Number(cd.value), 'custom'));
+    this.customSize.append(cw, '×', chh, '@', cd, apply);
+    this.customInputs = [cw, chh, cd];
+
     const fwd = button('Forward', () => this.withSelected((id) => this.deps.glass.bringForward(id)));
     const back = button('Back', () => this.withSelected((id) => this.deps.glass.sendBack(id)));
     const del = button('Delete', () => this.withSelected((id) => this.deps.glass.remove(id)));
@@ -141,12 +173,93 @@ export class UI {
     this.tabButtons = [tabGlass, tabOut];
 
     bar.append(
-      open, fwd, back, del, sep(),
+      open, this.undoBtn, fwd, back, del, sep(),
       this.lidBtn, this.dirBtn, this.revBtn, this.loopBtn, sep(),
-      this.scanBtn, this.captureBtn, save, spacer(), tabs,
+      this.scanBtn, this.captureBtn, save, sep(),
+      this.sizeSelect, this.customSize, this.sizeInfo, spacer(), tabs,
     );
     this.setupKeyboard();
     return bar;
+  }
+
+  private customInputs: HTMLInputElement[] = [];
+
+  // ---- output size -----------------------------------------------------
+
+  private onSizePreset(): void {
+    const p = SIZE_PRESETS.find((x) => x.id === this.sizeSelect.value);
+    if (!p) return;
+    if (p.id === 'custom') {
+      this.customSize.hidden = false;
+      const { scanner } = this.deps;
+      this.customInputs[0].value = String(scanner.width);
+      this.customInputs[1].value = String(scanner.height);
+      this.customInputs[2].value = String(scanner.outputDpi);
+      return;
+    }
+    this.setSize(p.w, p.h, p.dpi, p.id);
+  }
+
+  /** Resize the glass and the output. Clears any scan; images keep their relative positions. */
+  setSize(w: number, h: number, dpi: number, presetId = 'custom'): void {
+    if (!Number.isFinite(w) || !Number.isFinite(h) || !Number.isFinite(dpi)) return;
+    w = Math.round(Math.min(8192, Math.max(256, w)));
+    h = Math.round(Math.min(8192, Math.max(256, h)));
+    dpi = Math.round(Math.min(1200, Math.max(36, dpi)));
+    // iOS Safari refuses canvases much above 16 megapixels; scale down to fit.
+    const cap = 16_000_000;
+    if (w * h > cap) {
+      const k = Math.sqrt(cap / (w * h));
+      w = Math.floor(w * k);
+      h = Math.floor(h * k);
+    }
+    const { glass, scanner } = this.deps;
+    if (scanner.scanning) scanner.stop();
+    glass.resize(w, h);
+    scanner.outputDpi = dpi;
+    scanner.resize(w, h);
+    this.sizeSelect.value = presetId;
+    this.customSize.hidden = presetId !== 'custom';
+    this.layout();
+    this.syncButtons();
+    this.commit();
+    try {
+      localStorage.setItem('vscan.size', JSON.stringify({ w, h, dpi, preset: presetId }));
+    } catch {
+      // ignore
+    }
+  }
+
+  /** Restore the last used size, if any. */
+  restoreSize(): void {
+    try {
+      const raw = localStorage.getItem('vscan.size');
+      if (!raw) return;
+      const { w, h, dpi, preset } = JSON.parse(raw) as { w: number; h: number; dpi: number; preset: string };
+      this.setSize(w, h, dpi, preset);
+    } catch {
+      // ignore
+    }
+  }
+
+  // ---- undo --------------------------------------------------------------
+
+  /** Record the current placement of every image as the newest history entry. */
+  commit(): void {
+    const snap = snapshotGlass(this.deps.glass);
+    const last = this.history[this.history.length - 1];
+    if (last && sameSnapshot(last, snap)) return;
+    this.history.push(snap);
+    if (this.history.length > UI.MAX_HISTORY) this.history.shift();
+    this.syncButtons();
+  }
+
+  undo(): void {
+    if (this.history.length < 2) return;
+    this.history.pop();
+    restoreGlass(this.deps.glass, this.history[this.history.length - 1]);
+    this.hint.hidden = this.deps.glass.images.length > 0;
+    this.syncButtons();
   }
 
   private withSelected(fn: (id: number) => void): void {
@@ -170,6 +283,9 @@ export class UI {
     this.captureBtn.hidden = !(scanner.loop && scanner.scanning);
     this.captureBtn.disabled = false;
     for (const b of this.selButtons) b.disabled = glass.selectedId === null;
+    this.undoBtn.disabled = this.history.length < 2;
+    const inches = `${(scanner.width / scanner.outputDpi).toFixed(1)}×${(scanner.height / scanner.outputDpi).toFixed(1)}"`;
+    this.sizeInfo.textContent = `${scanner.width}×${scanner.height} · ${scanner.outputDpi} dpi · ${inches}`;
     this.tabButtons[0]?.classList.toggle('on', this.mobileTab === 'glass');
     this.tabButtons[1]?.classList.toggle('on', this.mobileTab === 'output');
   }
@@ -214,6 +330,11 @@ export class UI {
       const typing = t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA');
       if (typing && !(t as HTMLInputElement).type?.match(/checkbox|range/)) {
         if (e.key === 'Escape') (t as HTMLElement).blur();
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        this.undo();
         return;
       }
       const sel = glass.selected;
@@ -352,10 +473,10 @@ export class UI {
     for (const f of files) {
       if (!f.type.startsWith('image/')) continue;
       try {
-        const bmp = await createImageBitmap(f, { imageOrientation: 'from-image' });
-        this.deps.glass.addImage(bmp);
+        this.deps.glass.addImage(await decode(f));
       } catch (err) {
         console.warn('could not decode', f.name, err);
+        window.alert(`Could not open ${f.name}.`);
       }
     }
     this.hint.hidden = this.deps.glass.images.length > 0;
@@ -507,6 +628,59 @@ export class UI {
 }
 
 // ---- helpers ----------------------------------------------------------
+
+interface SizePreset {
+  id: string;
+  label: string;
+  w: number;
+  h: number;
+  dpi: number;
+}
+
+export const SIZE_PRESETS: SizePreset[] = [
+  { id: 'letter300', label: 'Letter 300 dpi', w: 2550, h: 3300, dpi: 300 },
+  { id: 'a4-300', label: 'A4 300 dpi', w: 2480, h: 3508, dpi: 300 },
+  { id: 'letter150', label: 'Letter 150 dpi', w: 1275, h: 1650, dpi: 150 },
+  { id: 'square2048', label: 'Square 2048', w: 2048, h: 2048, dpi: 300 },
+  { id: 'custom', label: 'Custom…', w: 0, h: 0, dpi: 0 },
+];
+
+/** Decode an image file; fall back to an <img> for formats createImageBitmap rejects. */
+async function decode(f: File): Promise<ImageBitmap> {
+  try {
+    return await createImageBitmap(f, { imageOrientation: 'from-image' });
+  } catch {
+    const url = URL.createObjectURL(f);
+    try {
+      const img = new Image();
+      img.src = url;
+      await img.decode();
+      return await createImageBitmap(img);
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+}
+
+function sameSnapshot(a: GlassSnapshot, b: GlassSnapshot): boolean {
+  if (a.selectedId !== b.selectedId || a.images.length !== b.images.length) return false;
+  for (let i = 0; i < a.images.length; i++) {
+    const p = a.images[i];
+    const q = b.images[i];
+    if (p.img !== q.img || p.x !== q.x || p.y !== q.y || p.scale !== q.scale || p.rotation !== q.rotation || p.z !== q.z) return false;
+  }
+  return true;
+}
+
+function numberInput(placeholder: string, min: number, max: number): HTMLInputElement {
+  const i = document.createElement('input');
+  i.type = 'number';
+  i.placeholder = placeholder;
+  i.min = String(min);
+  i.max = String(max);
+  i.title = placeholder;
+  return i;
+}
 
 export function isMobile(): boolean {
   return window.matchMedia('(max-width: 800px)').matches;

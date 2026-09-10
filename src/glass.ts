@@ -135,6 +135,31 @@ export class Glass {
   }
 }
 
+/** A restorable snapshot of every image's placement. Bitmaps are shared, not copied. */
+export interface GlassSnapshot {
+  images: (Transform & { img: GlassImage; z: number })[];
+  selectedId: number | null;
+}
+
+export function snapshotGlass(glass: Glass): GlassSnapshot {
+  return {
+    images: glass.images.map((img) => ({ img, ...snapshotTransform(img), z: img.z })),
+    selectedId: glass.selectedId,
+  };
+}
+
+export function restoreGlass(glass: Glass, snap: GlassSnapshot): void {
+  glass.images = snap.images.map(({ img, x, y, scale, rotation, z }) => {
+    img.x = x;
+    img.y = y;
+    img.scale = scale;
+    img.rotation = rotation;
+    img.z = z;
+    return img;
+  });
+  glass.selectedId = snap.selectedId;
+}
+
 /** Map a glass point into an image's local, unscaled, unrotated pixel space. */
 export function toLocal(img: Transform, x: number, y: number): { x: number; y: number } {
   const dx = x - img.x;
