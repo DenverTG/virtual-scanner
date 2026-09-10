@@ -138,11 +138,16 @@ void main() {
     v *= 1.0 - u_streak * (n - 0.5) * (0.7 + 0.8 * slow);
   }
   bool binary = u_threshOn > 0.5 || u_dither > 0;
+  // Noise before a threshold must die out in flat black and flat white,
+  // otherwise solid areas come out speckled instead of solid.
+  float edge = smoothstep(0.0, 0.3, v) * smoothstep(0.0, 0.3, 1.0 - v);
+  float grainNoise = hash12(floor(p / max(1.0, u_grainSize)) + seed * 90.0) - 0.5;
   if (u_roughOn > 0.5 && binary) {
     float r1 = hash12(p + seed * 50.0) - 0.5;
     float r2 = hash12(floor(p * 0.5) + seed * 70.0) - 0.5;
-    v += (r1 * 0.5 + r2 * 0.5) * u_rough;
+    v += (r1 * 0.5 + r2 * 0.5) * u_rough * edge;
   }
+  if (u_grainOn > 0.5 && binary) v += grainNoise * u_grain * edge;
 
   // Threshold and dither.
   if (u_dither == 3) {
@@ -164,11 +169,9 @@ void main() {
     v = mix(hard, v, s);
   }
 
-  // Texture after the threshold: things the toner did.
-  if (u_grainOn > 0.5) {
-    vec2 gp = floor(p / max(1.0, u_grainSize));
-    v += (hash12(gp + seed * 90.0) - 0.5) * u_grain;
-  }
+  // Texture after the threshold: things the toner did. Continuous-tone
+  // grain goes here; for 1-bit output it was folded in before the threshold.
+  if (u_grainOn > 0.5 && !binary) v += grainNoise * u_grain;
   if (u_dropOn > 0.5) {
     vec2 dp = floor(p / 2.0);
     float h = hash12(dp + seed * 110.0);

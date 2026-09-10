@@ -36,7 +36,7 @@ export const CONTROLS: Control[] = [
 
   // Tone.
   { id: 'levelsOn', label: 'Levels', group: 'Tone', type: 'stage', default: true },
-  { id: 'black', label: 'Black point', group: 'Tone', stage: 'levelsOn', type: 'range', min: 0, max: 1, step: 0.01, default: 0 },
+  { id: 'black', label: 'Black point', group: 'Tone', stage: 'levelsOn', type: 'range', min: 0, max: 1, step: 0.01, default: 0, help: 'Raise to crush dark tones to solid black.' },
   { id: 'white', label: 'White point', group: 'Tone', stage: 'levelsOn', type: 'range', min: 0, max: 1, step: 0.01, default: 1 },
   { id: 'gamma', label: 'Gamma', group: 'Tone', stage: 'levelsOn', type: 'range', min: 0.2, max: 3, step: 0.01, default: 1 },
   { id: 'threshOn', label: 'Threshold', group: 'Tone', type: 'stage', default: false },
@@ -61,7 +61,7 @@ export const CONTROLS: Control[] = [
   { id: 'streak', label: 'Amount', group: 'Texture', stage: 'streakOn', type: 'range', min: 0, max: 1, step: 0.01, default: 0.25 },
   { id: 'streakWidth', label: 'Width', group: 'Texture', stage: 'streakOn', type: 'range', min: 4, max: 400, step: 1, default: 60, unit: 'px' },
   { id: 'dropOn', label: 'Dropout', group: 'Texture', type: 'stage', default: false },
-  { id: 'dropout', label: 'Density', group: 'Texture', stage: 'dropOn', type: 'range', min: 0, max: 1, step: 0.01, default: 0.2 },
+  { id: 'dropout', label: 'Density', group: 'Texture', stage: 'dropOn', type: 'range', min: 0, max: 1, step: 0.01, default: 0.2, help: 'White specks in dark areas. Turn off for solid blacks.' },
   { id: 'seed', label: 'Seed', group: 'Texture', type: 'seed', default: 1 },
 
   // Paper.
@@ -94,7 +94,7 @@ export const MODES: Mode[] = [
     dither: 1,
     roughOn: true, rough: 0.12,
     streakOn: true, streak: 0.1, streakWidth: 40,
-    dropOn: true, dropout: 0.25,
+    dropOn: true, dropout: 0.08,
   } },
   { name: 'Fax', builtin: true, values: {
     fidelity: 100, speed: 20,
