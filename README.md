@@ -56,6 +56,13 @@ localStorage; **Export / Import** in the panel move them as JSON.
 
 ## Deploy
 
+GitHub Pages: `.github/workflows/scanner-pages.yml` builds `scanner/` with
+`--base=/sandbox/` on every push to the default branch and publishes it at
+https://denvertg.github.io/sandbox/. Enable it once under repo Settings →
+Pages → Source: GitHub Actions.
+
+Vercel:
+
 The app is a static Vite site. On Vercel, create a project from this repo
 with **Root Directory** set to `scanner`; the framework is auto-detected and
 `vercel.json` pins it. No environment variables, no backend.
