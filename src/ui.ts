@@ -1,12 +1,16 @@
-// Everything on screen that is not the glass, the scan loop or the input
-// mapping: toolbar, panes, file loading, view drawing and saving.
+// Everything on screen that is not the glass, the scan loop, the input
+// mapping, the effect chain or the panel: toolbar, panes, file loading,
+// view drawing, the mobile sheet and saving.
 
 import type { Glass } from './glass';
 import type { Scanner } from './scanner';
+import { Effects, type EffectParams } from './effects';
+import type { Panel } from './panel';
 
 export interface UIDeps {
   glass: Glass;
   scanner: Scanner;
+  panel: Panel;
   onImagesChanged: () => void;
 }
 
@@ -16,13 +20,16 @@ export class UI {
   readonly outputView: HTMLCanvasElement;
   private readonly glassPane: HTMLElement;
   private readonly outputPane: HTMLElement;
+  private readonly rail: HTMLElement;
   private readonly hint: HTMLElement;
   private readonly gctx: CanvasRenderingContext2D;
-  private readonly octx: CanvasRenderingContext2D;
+  private octx: CanvasRenderingContext2D | null = null;
+  private effects: Effects | null = null;
   private readonly deps: UIDeps;
   private scanBtn!: HTMLButtonElement;
   private lidBtn!: HTMLButtonElement;
   private dirBtn!: HTMLButtonElement;
+  private tabButtons: HTMLButtonElement[] = [];
   private mobileTab: 'glass' | 'output' = 'glass';
   private outputDirty = true;
 
@@ -45,13 +52,30 @@ export class UI {
     this.hint.className = 'hint';
     this.hint.innerHTML = '<div><b>Drop an image</b>, paste one, or use Open.<br>Drag to move · wheel or pinch to scale · shift-drag to rotate</div>';
     this.glassPane.appendChild(this.hint);
-    main.append(this.glassPane, this.outputPane);
+
+    this.rail = document.createElement('aside');
+    this.rail.className = 'rail';
+    const grip = document.createElement('div');
+    grip.className = 'grip';
+    grip.innerHTML = '<span></span>';
+    this.rail.append(grip, deps.panel.root);
+    this.setupSheet(grip);
+
+    main.append(this.glassPane, this.outputPane, this.rail);
     root.appendChild(main);
 
     this.gctx = this.glassView.getContext('2d')!;
-    this.octx = this.outputView.getContext('2d')!;
+    try {
+      this.effects = new Effects(this.outputView);
+    } catch (err) {
+      console.warn('effects disabled:', err);
+      this.octx = this.outputView.getContext('2d')!;
+    }
 
-    deps.scanner.onChange = () => { this.outputDirty = true; };
+    deps.scanner.onChange = () => {
+      this.outputDirty = true;
+      this.effects?.markSourceDirty();
+    };
     deps.scanner.onEnd = () => this.syncButtons();
 
     window.addEventListener('resize', () => this.layout());
@@ -59,6 +83,7 @@ export class UI {
     this.applyMobileTab();
     this.layout();
     this.syncButtons();
+    this.updateEffectParams();
   }
 
   // ---- toolbar -------------------------------------------------------
@@ -71,23 +96,14 @@ export class UI {
     this.lidBtn = button('', () => {
       this.deps.glass.lidClosed = !this.deps.glass.lidClosed;
       this.syncButtons();
+      this.updateEffectParams();
     });
     this.dirBtn = button('', () => {
       const s = this.deps.scanner;
       s.direction = s.direction === 'vertical' ? 'horizontal' : 'vertical';
       this.syncButtons();
+      this.updateEffectParams();
     });
-
-    const speed = document.createElement('input');
-    speed.type = 'number';
-    speed.min = '0.5';
-    speed.max = '120';
-    speed.step = '0.5';
-    speed.value = String(this.deps.scanner.secondsPerPass);
-    speed.addEventListener('change', () => {
-      this.deps.scanner.secondsPerPass = Math.max(0.5, Number(speed.value) || 8);
-    });
-    const speedLabel = label('speed', speed, 's/pass');
 
     this.scanBtn = button('Scan', () => this.toggleScan());
     this.scanBtn.classList.add('primary');
@@ -100,11 +116,9 @@ export class UI {
     tabs.append(tabGlass, tabOut);
     this.tabButtons = [tabGlass, tabOut];
 
-    bar.append(open, sep(), this.lidBtn, this.dirBtn, speedLabel, sep(), this.scanBtn, save, spacer(), tabs);
+    bar.append(open, sep(), this.lidBtn, this.dirBtn, sep(), this.scanBtn, save, spacer(), tabs);
     return bar;
   }
-
-  private tabButtons: HTMLButtonElement[] = [];
 
   syncButtons(): void {
     const { glass, scanner } = this.deps;
@@ -120,10 +134,18 @@ export class UI {
     const s = this.deps.scanner;
     if (s.scanning) s.stop();
     else {
+      this.syncScanSettings();
       s.start();
-      if (window.innerWidth <= 800) this.setMobileTab('output');
+      if (isMobile()) this.setMobileTab('output');
     }
     this.syncButtons();
+  }
+
+  /** Push the scan-loop settings from the panel into the scanner. */
+  syncScanSettings(): void {
+    const { scanner, panel } = this.deps;
+    scanner.secondsPerPass = panel.get<number>('speed');
+    scanner.fidelityDpi = panel.get<number>('fidelity');
   }
 
   private setMobileTab(tab: 'glass' | 'output'): void {
@@ -136,6 +158,45 @@ export class UI {
   private applyMobileTab(): void {
     this.glassPane.classList.toggle('hidden', this.mobileTab !== 'glass');
     this.outputPane.classList.toggle('hidden', this.mobileTab !== 'output');
+  }
+
+  // ---- mobile bottom sheet ---------------------------------------------
+
+  private setupSheet(grip: HTMLElement): void {
+    const rail = this.rail;
+    rail.dataset.sheet = 'half';
+    document.body.dataset.sheet = 'half';
+    let startY = 0;
+    let startH = 0;
+    let moved = false;
+    grip.addEventListener('pointerdown', (e) => {
+      grip.setPointerCapture(e.pointerId);
+      startY = e.clientY;
+      startH = rail.getBoundingClientRect().height;
+      moved = false;
+      rail.classList.add('dragging');
+    });
+    grip.addEventListener('pointermove', (e) => {
+      if (!grip.hasPointerCapture(e.pointerId)) return;
+      const dy = startY - e.clientY;
+      if (Math.abs(dy) > 4) moved = true;
+      if (moved) rail.style.height = `${Math.max(40, Math.min(window.innerHeight * 0.9, startH + dy))}px`;
+    });
+    const end = (e: PointerEvent) => {
+      if (!grip.hasPointerCapture(e.pointerId)) return;
+      grip.releasePointerCapture(e.pointerId);
+      rail.classList.remove('dragging');
+      const h = rail.getBoundingClientRect().height / window.innerHeight;
+      let next: string;
+      if (!moved) next = rail.dataset.sheet === 'closed' ? 'half' : 'closed';
+      else next = h < 0.2 ? 'closed' : h < 0.65 ? 'half' : 'full';
+      rail.style.height = '';
+      rail.dataset.sheet = next;
+      document.body.dataset.sheet = next;
+      this.layout();
+    };
+    grip.addEventListener('pointerup', end);
+    grip.addEventListener('pointercancel', end);
   }
 
   // ---- files ---------------------------------------------------------
@@ -190,7 +251,15 @@ export class UI {
 
   savePng(): void {
     const { scanner } = this.deps;
-    scanner.output.toBlob((blob) => {
+    let canvas: HTMLCanvasElement = scanner.output;
+    if (this.effects) {
+      try {
+        canvas = this.effects.exportCanvas(scanner.output);
+      } catch (err) {
+        console.warn('export through effects failed, saving raw scan', err);
+      }
+    }
+    canvas.toBlob((blob) => {
       if (!blob) return;
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
@@ -198,6 +267,34 @@ export class UI {
       a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 10000);
     }, 'image/png');
+  }
+
+  // ---- effects -------------------------------------------------------
+
+  /** Rebuild the shader parameters from the panel and the scanner. */
+  updateEffectParams(): void {
+    if (!this.effects) return;
+    const { panel, scanner, glass } = this.deps;
+    const g = <T extends number | boolean>(id: string) => panel.get<T>(id);
+    const p: EffectParams = {
+      seed: g('seed'),
+      axis: scanner.direction,
+      lidOpen: !glass.lidClosed,
+      bleedOn: g('bleedOn'), bleedSpread: g('bleedSpread'), bleedIntensity: g('bleedIntensity'),
+      leakOn: g('leakOn'), leakReach: g('leakReach'),
+      levelsOn: g('levelsOn'), black: g('black'), white: g('white'), gamma: g('gamma'),
+      threshOn: g('threshOn'), thresh: g('thresh'), threshSoft: g('threshSoft'),
+      dither: g('dither'), ditherCell: g('ditherCell'), ditherAngle: g('ditherAngle'),
+      genLoss: g('genLoss'),
+      grainOn: g('grainOn'), grain: g('grain'), grainSize: g('grainSize'),
+      roughOn: g('roughOn'), rough: g('rough'),
+      jitterOn: g('jitterOn'), jitter: g('jitter'),
+      streakOn: g('streakOn'), streak: g('streak'), streakWidth: g('streakWidth'),
+      dropOn: g('dropOn'), dropout: g('dropout'),
+      paperOn: g('paperOn'), tint: g('tint'), vignette: g('vignette'),
+    };
+    this.effects.setParams(p);
+    this.outputDirty = true;
   }
 
   // ---- layout and drawing -------------------------------------------
@@ -212,14 +309,14 @@ export class UI {
   /** Called every animation frame. */
   draw(): void {
     this.drawGlass();
-    if (this.outputDirty) {
+    if (this.outputDirty || this.effects?.needsRender) {
       this.drawOutput();
       this.outputDirty = false;
     }
   }
 
   private drawGlass(): void {
-    const { glass, scanner } = this.deps;
+    const { glass, scanner, panel } = this.deps;
     const ctx = this.gctx;
     const cw = this.glassView.width;
     const ch = this.glassView.height;
@@ -227,7 +324,6 @@ export class UI {
     const scale = cw / glass.width;
     glass.render(ctx, scale);
 
-    // Selection outline.
     const sel = glass.selected;
     if (sel) {
       ctx.setTransform(scale, 0, 0, scale, sel.x * scale, sel.y * scale);
@@ -239,20 +335,22 @@ export class UI {
       ctx.setTransform(1, 0, 0, 1, 0, 0);
     }
 
-    // The bar.
     if (scanner.state !== 'idle') {
       const p = scanner.barPos * scale;
       const vertical = scanner.direction === 'vertical';
       const dir = scanner.reverse ? -1 : 1;
-      const lead = 40 * (window.devicePixelRatio || 1) * dir;
-      const grad = vertical
-        ? ctx.createLinearGradient(0, p, 0, p + lead)
-        : ctx.createLinearGradient(p, 0, p + lead, 0);
-      grad.addColorStop(0, 'rgba(255, 220, 120, 0.55)');
-      grad.addColorStop(1, 'rgba(255, 220, 120, 0)');
-      ctx.fillStyle = grad;
-      if (vertical) ctx.fillRect(0, Math.min(p, p + lead), cw, Math.abs(lead));
-      else ctx.fillRect(Math.min(p, p + lead), 0, Math.abs(lead), ch);
+      const glow = panel.get<number>('lampGlow');
+      if (glow > 0 && scanner.scanning) {
+        const lead = 90 * (window.devicePixelRatio || 1) * dir;
+        const grad = vertical
+          ? ctx.createLinearGradient(0, p, 0, p + lead)
+          : ctx.createLinearGradient(p, 0, p + lead, 0);
+        grad.addColorStop(0, `rgba(255, 225, 140, ${0.7 * glow})`);
+        grad.addColorStop(1, 'rgba(255, 225, 140, 0)');
+        ctx.fillStyle = grad;
+        if (vertical) ctx.fillRect(0, Math.min(p, p + lead), cw, Math.abs(lead));
+        else ctx.fillRect(Math.min(p, p + lead), 0, Math.abs(lead), ch);
+      }
       ctx.fillStyle = scanner.scanning ? '#ffd23f' : 'rgba(255,210,63,0.5)';
       const t = Math.max(1, 1.5 * (window.devicePixelRatio || 1));
       if (vertical) ctx.fillRect(0, p - t / 2, cw, t);
@@ -262,17 +360,23 @@ export class UI {
 
   private drawOutput(): void {
     const { scanner } = this.deps;
-    const ctx = this.octx;
     const cw = this.outputView.width;
     const ch = this.outputView.height;
     if (cw === 0 || ch === 0) return;
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(scanner.output, 0, 0, cw, ch);
+    if (this.effects) {
+      this.effects.render(scanner.output);
+    } else if (this.octx) {
+      this.octx.imageSmoothingEnabled = true;
+      this.octx.drawImage(scanner.output, 0, 0, cw, ch);
+    }
   }
 }
 
 // ---- helpers ----------------------------------------------------------
+
+export function isMobile(): boolean {
+  return window.matchMedia('(max-width: 800px)').matches;
+}
 
 function pane(id: string, caption: string): HTMLElement {
   const el = document.createElement('section');
@@ -291,13 +395,6 @@ function button(text: string, onClick: () => void): HTMLButtonElement {
   b.textContent = text;
   b.addEventListener('click', onClick);
   return b;
-}
-
-function label(text: string, el: HTMLElement, suffix?: string): HTMLLabelElement {
-  const l = document.createElement('label');
-  l.append(text, el);
-  if (suffix) l.append(suffix);
-  return l;
 }
 
 function sep(): HTMLElement {

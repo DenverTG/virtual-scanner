@@ -2,6 +2,7 @@ import './style.css';
 import { Glass } from './glass';
 import { Scanner } from './scanner';
 import { Input } from './input';
+import { Panel } from './panel';
 import { UI } from './ui';
 
 // Letter at 300 dpi. The glass and the output share this size; the
@@ -11,11 +12,24 @@ const HEIGHT = 3300;
 
 const glass = new Glass(WIDTH, HEIGHT);
 const scanner = new Scanner(glass, WIDTH, HEIGHT);
-const ui = new UI(document.getElementById('app')!, {
+
+let ui: UI;
+const panel = new Panel(document.createElement('div'), {
+  onChange: () => {
+    ui?.syncScanSettings();
+    ui?.updateEffectParams();
+  },
+});
+panel.root.className = 'panel';
+
+ui = new UI(document.getElementById('app')!, {
   glass,
   scanner,
+  panel,
   onImagesChanged: () => {},
 });
+ui.syncScanSettings();
+
 new Input(ui.glassView, glass, {
   onChange: () => {},
   onGestureEnd: () => {},

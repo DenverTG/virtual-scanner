@@ -24,6 +24,12 @@ export class Scanner {
   direction: Direction = 'vertical';
   reverse = false;
   secondsPerPass = 8;
+  /** Nominal dpi of the output; fidelity is expressed relative to it. */
+  outputDpi = 300;
+  /** Sample resolution of the scan head in dpi. Takes effect on the next pass. */
+  fidelityDpi = 300;
+  /** Sample px per output px for the pass in progress (<= 1). */
+  private sampleScale = 1;
 
   state: ScanState = 'idle';
   /** Rows (along the scan axis) the bar has travelled this pass, 0..length. */
@@ -51,6 +57,7 @@ export class Scanner {
     this.height = height;
     this.output.width = width;
     this.output.height = height;
+    this.sampleScale = 1;
     this.sample.width = width;
     this.sample.height = height;
     this.state = 'idle';
@@ -76,8 +83,17 @@ export class Scanner {
   start(): void {
     this.pos = 0;
     this.written = 0;
+    this.applyFidelity();
     this.clearOutput();
     this.state = 'scanning';
+  }
+
+  private applyFidelity(): void {
+    const s = Math.min(1, Math.max(0.02, this.fidelityDpi / this.outputDpi));
+    if (s === this.sampleScale && this.sample.width > 0) return;
+    this.sampleScale = s;
+    this.sample.width = Math.max(1, Math.ceil(this.width * s));
+    this.sample.height = Math.max(1, Math.ceil(this.height * s));
   }
 
   stop(): void {
@@ -122,17 +138,21 @@ export class Scanner {
     const w = vertical ? this.width : b - a;
     const h = vertical ? b - a : this.height;
 
-    // Render only the strip we need from the glass at output resolution.
+    // Render only the strip we need from the glass, at the head's sample
+    // resolution, then copy it up into the output (nearest-neighbour when
+    // the head is coarser than the page, like a real low-res scan).
+    const k = this.sampleScale;
     const s = this.sctx;
     s.save();
     s.setTransform(1, 0, 0, 1, 0, 0);
     s.beginPath();
-    s.rect(x, y, w, h);
+    s.rect(Math.floor(x * k) - 1, Math.floor(y * k) - 1, Math.ceil(w * k) + 2, Math.ceil(h * k) + 2);
     s.clip();
-    this.glass.render(s, 1);
+    this.glass.render(s, k);
     s.restore();
 
-    this.octx.drawImage(this.sample, x, y, w, h, x, y, w, h);
+    this.octx.imageSmoothingEnabled = k >= 1;
+    this.octx.drawImage(this.sample, x * k, y * k, w * k, h * k, x, y, w, h);
     this.onChange?.();
   }
 }
