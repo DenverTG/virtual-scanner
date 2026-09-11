@@ -1,5 +1,9 @@
-// Records the output while a pass runs, holds on the finished scan for a
-// few seconds, and hands back a file.
+// Records the output while a pass runs and hands back a file.
+//
+// A clip spans as many passes as you like. Between passes the recorder is
+// paused rather than stopped, which takes the gap spent repositioning out of
+// the encoded timeline, so passes cut straight into each other. The clip ends
+// on an explicit finish, holds a few seconds on the final image, and saves.
 //
 // Frames are blitted into a plain 2D canvas rather than captured from the
 // WebGL canvas directly. captureStream on a WebGL surface depends on the
@@ -26,7 +30,7 @@ const MAX_EDGE = 1080;
 /** Still frames held on the finished scan at the end of the clip. */
 const HOLD_MS = 5000;
 
-export type RecorderState = 'idle' | 'recording' | 'holding';
+export type RecorderState = 'idle' | 'recording' | 'paused' | 'holding';
 
 function pickMime(): string | null {
   if (typeof MediaRecorder === 'undefined') return null;
@@ -111,9 +115,43 @@ export class Recorder {
     this.ctx.drawImage(src, 0, 0, this.canvas.width, this.canvas.height);
   }
 
-  /** The pass ended: hold on the final frame, then stop and save. */
-  hold(): void {
-    if (this.state !== 'recording') return;
+  /**
+   * A pass ended but the clip has not. Pausing stops the clip's clock, so the
+   * time spent repositioning before the next pass is cut out rather than
+   * sitting in the video as a frozen frame.
+   */
+  pausePass(): void {
+    if (this.state !== 'recording' || !this.rec) return;
+    try {
+      this.rec.pause();
+    } catch {
+      // A browser that will not pause simply keeps recording the gap.
+      return;
+    }
+    this.state = 'paused';
+  }
+
+  /** A new pass is starting: pick the same clip back up. */
+  resumePass(): void {
+    if (this.state !== 'paused' || !this.rec) return;
+    try {
+      this.rec.resume();
+    } catch {
+      // ignore; the clip carries on either way
+    }
+    this.state = 'recording';
+  }
+
+  /** End the clip: hold on the final image, then stop and save. */
+  finish(): void {
+    if (this.state !== 'recording' && this.state !== 'paused') return;
+    if (this.state === 'paused') {
+      try {
+        this.rec?.resume();
+      } catch {
+        // ignore
+      }
+    }
     this.still.width = this.canvas.width;
     this.still.height = this.canvas.height;
     this.still.getContext('2d')!.drawImage(this.canvas, 0, 0);

@@ -96,7 +96,7 @@ export class UI {
       this.effects?.markSourceDirty();
     };
     deps.scanner.onEnd = () => {
-      this.recorder.hold();
+      this.recorder.pausePass();
       this.syncButtons();
     };
     this.recorder.onDone = (err) => {
@@ -165,6 +165,8 @@ export class UI {
     });
 
     this.clearBtn = button('Clear', () => {
+      // Wiping the sheet ends the take: the clip is of this collage.
+      this.recorder.finish();
       this.deps.scanner.clear();
       this.syncButtons();
     });
@@ -172,11 +174,13 @@ export class UI {
 
     this.recBtn = button('Record', () => {
       const r = this.recorder;
-      if (r.active) r.cancel();
-      else r.armed = !r.armed;
+      // Once a clip is running this button is how you end and save it, which
+      // is the way to keep a collage on the sheet instead of clearing it.
+      if (r.state === 'recording' || r.state === 'paused') r.finish();
+      else if (r.state === 'idle') r.armed = !r.armed;
       this.syncButtons();
     });
-    this.recBtn.title = 'Record the next pass as a video, with a still hold at the end';
+    this.recBtn.title = 'Record from the next pass until you clear the sheet or press this again';
 
     this.scanBtn = button('Scan', () => this.toggleScan());
     this.scanBtn.classList.add('primary');
@@ -265,6 +269,9 @@ export class UI {
       h = Math.floor(h * k);
     }
     const { glass, scanner } = this.deps;
+    // The clip's dimensions are fixed when it starts, so end it here rather
+    // than letting the rest of it record at a mismatched size.
+    this.recorder.finish();
     if (scanner.scanning) scanner.stop();
     glass.resize(w, h);
     scanner.outputDpi = dpi;
@@ -340,9 +347,13 @@ export class UI {
     this.blendSelect.value = scanner.blend;
     this.clearBtn.hidden = !scanner.persist;
     const rec = this.recorder;
-    this.recBtn.disabled = !videoSupported();
     this.recBtn.classList.toggle('on', rec.armed || rec.active);
-    this.recBtn.textContent = rec.state === 'recording' ? 'Recording' : rec.state === 'holding' ? 'Holding' : 'Record';
+    this.recBtn.textContent =
+      rec.state === 'recording' ? 'Recording' :
+      rec.state === 'paused' ? 'Rec paused' :
+      rec.state === 'holding' ? 'Saving' :
+      rec.armed ? 'Armed' : 'Record';
+    this.recBtn.disabled = !videoSupported() || rec.state === 'holding';
     const inches = `${(scanner.width / scanner.outputDpi).toFixed(1)}×${(scanner.height / scanner.outputDpi).toFixed(1)}"`;
     this.sizeInfo.textContent = `${scanner.width}×${scanner.height} · ${scanner.outputDpi} dpi · ${inches}`;
     this.tabButtons[0]?.classList.toggle('on', this.mobileTab === 'glass');
@@ -353,12 +364,14 @@ export class UI {
     const s = this.deps.scanner;
     if (s.scanning) {
       s.stop();
-      // A stopped pass is still a take, so the clip gets its hold and saves.
-      this.recorder.hold();
+      // A stopped pass still belongs to the clip, so pause rather than end.
+      this.recorder.pausePass();
     } else {
       this.syncScanSettings();
       if (this.recorder.armed && !this.recorder.active) {
         this.recorder.begin(s.width, s.height);
+      } else {
+        this.recorder.resumePass();
       }
       s.start();
       if (isMobile()) this.setMobileTab('output');

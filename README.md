@@ -52,10 +52,22 @@ normal.
 
 ### Video
 
-**Record** arms the next pass. The clip builds row by row as the bar sweeps,
-then holds on the finished scan for five seconds, and saves when the pass ends.
-Stopping a pass early still saves the take. Press Record again while it is
-running to throw the clip away.
+**Record** arms the next pass; the button reads **Armed** while it waits. One
+clip spans as many passes as you like, so a collage records as a single video
+of itself being built.
+
+- Each pass is recorded as the bar sweeps.
+- Between passes the clip pauses, which reads **Rec paused**. The time you
+  spend repositioning is cut out of the timeline, so passes cut straight into
+  each other instead of sitting on a frozen frame.
+- **Clear** ends the clip, and so does pressing **Record** again. Either way it
+  holds five seconds on the final image and saves one file. Use Record to stop
+  when you want to keep the collage on the sheet, since Clear wipes it.
+- Arming survives a save, so the next collage records too. Press Record from
+  idle to disarm.
+
+For a single-pass clip, arm it immediately before the pass you want and press
+Record again when that pass ends.
 
 The clip is the output pane with the effect chain applied, longest edge 1080,
 in H.264 MP4 where the browser can encode it and WebM otherwise. Bare
@@ -86,8 +98,10 @@ localStorage; **Export / Import** in the panel move them as JSON.
   Ctrl+Z after a drag.
 - Collage: turn it on, scan, move the image, scan again. Both passes are on
   the sheet. Turn it off and scan: the sheet clears again.
-- Video: arm Record, scan, and wait. The file lands when the hold ends and
-  should play the sweep followed by a five second still.
+- Video: arm Record, then scan three times with the image moved between each,
+  waiting a while between passes. Press Record to end it. One file lands,
+  showing the three sweeps cut together with the waiting removed, then a five
+  second still.
 
 ## Deploy
 
