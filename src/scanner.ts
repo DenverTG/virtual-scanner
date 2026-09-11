@@ -10,8 +10,16 @@ import { snapshotTransform } from './glass';
 
 export type Direction = 'vertical' | 'horizontal';
 export type ScanState = 'idle' | 'scanning' | 'done';
+/** How a collage pass lands on top of the passes before it. */
+export type Blend = 'over' | 'darken' | 'lighten';
 
 const BLANK = '#8f8f8f';
+
+const BLEND_OP: Record<Blend, GlobalCompositeOperation> = {
+  over: 'source-over',
+  darken: 'darken',
+  lighten: 'lighten',
+};
 
 export class Scanner {
   readonly glass: Glass;
@@ -38,6 +46,13 @@ export class Scanner {
    */
   exposure = 0;
   private prev: TransformMap = new Map();
+
+  /**
+   * Collage mode. Passes stop clearing the output and stop painting the lid,
+   * so each new pass lays its images over the ones already on the sheet.
+   */
+  persist = false;
+  blend: Blend = 'darken';
 
   /** Pause the bar without ending the pass (the hold key). */
   hold = false;
@@ -99,7 +114,7 @@ export class Scanner {
     this.written = 0;
     this.captureNext = false;
     this.applyFidelity();
-    this.clearOutput();
+    if (!this.persist) this.clearOutput();
     this.state = 'scanning';
   }
 
@@ -118,6 +133,25 @@ export class Scanner {
 
   stop(): void {
     if (this.state === 'scanning') this.state = this.pos > 0 ? 'done' : 'idle';
+  }
+
+  /**
+   * Start a fresh sheet. In collage mode the sheet is the lid colour, so a
+   * darken stack builds on white and a lighten stack builds on black.
+   */
+  clear(): void {
+    if (!this.persist) {
+      this.clearOutput();
+      return;
+    }
+    this.octx.setTransform(1, 0, 0, 1, 0, 0);
+    this.octx.globalCompositeOperation = 'source-over';
+    this.octx.fillStyle = this.glass.lidColor;
+    this.octx.fillRect(0, 0, this.width, this.height);
+    this.state = 'idle';
+    this.pos = 0;
+    this.written = 0;
+    this.onChange?.();
   }
 
   private clearOutput(): void {
@@ -194,7 +228,7 @@ export class Scanner {
   private renderSample(k: number): void {
     const s = this.sctx;
     if (this.exposure <= 0 || !this.moved()) {
-      this.glass.render(s, k);
+      this.glass.render(s, k, undefined, this.persist);
       return;
     }
     const n = 4;
@@ -202,7 +236,7 @@ export class Scanner {
       const t = 1 - this.exposure * (1 - i / (n - 1));
       // Drawing layer i with alpha 1/(i+1) leaves an equal-weight average.
       s.globalAlpha = 1 / (i + 1);
-      this.glass.render(s, k, this.between(t));
+      this.glass.render(s, k, this.between(t), this.persist);
     }
     s.globalAlpha = 1;
   }
@@ -224,16 +258,25 @@ export class Scanner {
     // the head is coarser than the page, like a real low-res scan).
     const k = this.sampleScale;
     const s = this.sctx;
+    const rx = Math.floor(x * k) - 1;
+    const ry = Math.floor(y * k) - 1;
+    const rw = Math.ceil(w * k) + 2;
+    const rh = Math.ceil(h * k) + 2;
     s.save();
     s.setTransform(1, 0, 0, 1, 0, 0);
     s.beginPath();
-    s.rect(Math.floor(x * k) - 1, Math.floor(y * k) - 1, Math.ceil(w * k) + 2, Math.ceil(h * k) + 2);
+    s.rect(rx, ry, rw, rh);
     s.clip();
+    // A collage pass paints no lid, so the previous frame's strip has to be
+    // wiped by hand instead of being covered over.
+    if (this.persist) s.clearRect(rx, ry, rw, rh);
     this.renderSample(k);
     s.restore();
 
     this.octx.imageSmoothingEnabled = k >= 1;
+    this.octx.globalCompositeOperation = this.persist ? BLEND_OP[this.blend] : 'source-over';
     this.octx.drawImage(this.sample, x * k, y * k, w * k, h * k, x, y, w, h);
+    this.octx.globalCompositeOperation = 'source-over';
     this.onChange?.();
   }
 }

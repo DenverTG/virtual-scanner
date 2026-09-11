@@ -117,11 +117,16 @@ export class Glass {
   /**
    * Draw the whole glass into ctx, scaled by `scale` (1 = output resolution).
    * The caller owns the context state; this overwrites the transform.
+   * With `transparent`, the lid is not painted and only images are drawn.
    */
-  render(ctx: CanvasRenderingContext2D, scale: number, overrides?: TransformMap): void {
+  render(ctx: CanvasRenderingContext2D, scale: number, overrides?: TransformMap, transparent = false): void {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = this.lidColor;
-    ctx.fillRect(0, 0, this.width * scale, this.height * scale);
+    // Collage passes leave the lid unpainted so only the images land in the
+    // output and whatever was scanned earlier survives underneath.
+    if (!transparent) {
+      ctx.fillStyle = this.lidColor;
+      ctx.fillRect(0, 0, this.width * scale, this.height * scale);
+    }
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
     for (const img of this.sorted()) {

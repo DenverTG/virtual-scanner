@@ -32,6 +32,37 @@ for the design.
    - hold **H** to pause the bar and reposition
 5. **Save PNG** exports the output through the effect chain at full resolution.
 
+### Collage
+
+**Collage** stops each pass from wiping the sheet, so scans stack. Move the
+image, or swap it, and scan again. The picker beside it decides how a new pass
+lands on the ones before it:
+
+- **darken** keeps whatever is darker. White paper lets earlier passes show
+  through, so only the marks build up. This is the stacked-photocopy look and
+  the right default on a closed (white) lid.
+- **over** paints the sheet opaquely, so later passes cover earlier ones the
+  way overlapping paper does.
+- **lighten** is the inverse of darken, for working on a black sheet with the
+  lid open.
+
+**Clear** starts a fresh sheet in the lid colour. Turning Collage off leaves the
+finished collage on screen so it can still be exported; the next pass clears as
+normal.
+
+### Video
+
+**Record** arms the next pass. The clip builds row by row as the bar sweeps,
+then holds on the finished scan for five seconds, and saves when the pass ends.
+Stopping a pass early still saves the take. Press Record again while it is
+running to throw the clip away.
+
+The clip is the output pane with the effect chain applied, longest edge 1080,
+in H.264 MP4 where the browser can encode it and WebM otherwise. Bare
+`video/mp4` is never requested: browsers report it as supported and may then
+produce VP9 inside an MP4 container, which most players and upload pipelines
+reject.
+
 Other controls: **Lid** open/closed (black or white background, and the Lid
 leak stage), **Sweep** direction, **Reverse**, **Loop** (sweep continuously
 until **Capture** freezes the current pass), **Forward / Back / Delete** for
@@ -53,6 +84,10 @@ localStorage; **Export / Import** in the panel move them as JSON.
   rotate, Loop + Capture, hold H mid-scan.
 - Phase 4: change the output size preset, export a JSON, Import it back,
   Ctrl+Z after a drag.
+- Collage: turn it on, scan, move the image, scan again. Both passes are on
+  the sheet. Turn it off and scan: the sheet clears again.
+- Video: arm Record, scan, and wait. The file lands when the hold ends and
+  should play the sweep followed by a five second still.
 
 ## Deploy
 

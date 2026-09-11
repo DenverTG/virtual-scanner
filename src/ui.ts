@@ -6,6 +6,8 @@ import { snapshotGlass, restoreGlass, type Glass, type GlassSnapshot } from './g
 import type { Scanner } from './scanner';
 import { Effects, type EffectParams } from './effects';
 import type { Panel } from './panel';
+import { Recorder, videoSupported } from './recorder';
+import type { Blend } from './scanner';
 import { handlePos, HANDLE_RADIUS_CSS } from './input';
 
 export interface UIDeps {
@@ -36,6 +38,11 @@ export class UI {
   private captureBtn!: HTMLButtonElement;
   private selButtons: HTMLButtonElement[] = [];
   private undoBtn!: HTMLButtonElement;
+  private collageBtn!: HTMLButtonElement;
+  private blendSelect!: HTMLSelectElement;
+  private clearBtn!: HTMLButtonElement;
+  private recBtn!: HTMLButtonElement;
+  private readonly recorder = new Recorder();
   private sizeSelect!: HTMLSelectElement;
   private sizeInfo!: HTMLElement;
   private customSize!: HTMLElement;
@@ -88,7 +95,14 @@ export class UI {
       this.outputDirty = true;
       this.effects?.markSourceDirty();
     };
-    deps.scanner.onEnd = () => this.syncButtons();
+    deps.scanner.onEnd = () => {
+      this.recorder.hold();
+      this.syncButtons();
+    };
+    this.recorder.onDone = (err) => {
+      if (err) window.alert(`Could not save the video: ${err.message}`);
+      this.syncButtons();
+    };
 
     window.addEventListener('resize', () => this.layout());
     window.addEventListener('orientationchange', () => setTimeout(() => this.layout(), 300));
@@ -128,6 +142,42 @@ export class UI {
       this.syncButtons();
     });
     this.loopBtn.title = 'Sweep continuously; Capture freezes the current pass';
+    this.collageBtn = button('Collage', () => {
+      const s = this.deps.scanner;
+      s.persist = !s.persist;
+      // Turning it on starts a clean sheet; turning it off leaves the
+      // finished collage on screen so it can still be exported.
+      if (s.persist) s.clear();
+      this.syncButtons();
+    });
+    this.collageBtn.title = 'Build each pass on top of the last instead of starting blank';
+
+    this.blendSelect = document.createElement('select');
+    this.blendSelect.title = 'How a new pass lands on the passes before it';
+    for (const [value, label] of [['darken', 'darken'], ['over', 'over'], ['lighten', 'lighten']] as const) {
+      const o = document.createElement('option');
+      o.value = value;
+      o.textContent = label;
+      this.blendSelect.appendChild(o);
+    }
+    this.blendSelect.addEventListener('change', () => {
+      this.deps.scanner.blend = this.blendSelect.value as Blend;
+    });
+
+    this.clearBtn = button('Clear', () => {
+      this.deps.scanner.clear();
+      this.syncButtons();
+    });
+    this.clearBtn.title = 'Start a fresh sheet';
+
+    this.recBtn = button('Record', () => {
+      const r = this.recorder;
+      if (r.active) r.cancel();
+      else r.armed = !r.armed;
+      this.syncButtons();
+    });
+    this.recBtn.title = 'Record the next pass as a video, with a still hold at the end';
+
     this.scanBtn = button('Scan', () => this.toggleScan());
     this.scanBtn.classList.add('primary');
     this.captureBtn = button('Capture', () => {
@@ -175,7 +225,8 @@ export class UI {
     bar.append(
       open, this.undoBtn, fwd, back, del, sep(),
       this.lidBtn, this.dirBtn, this.revBtn, this.loopBtn, sep(),
-      this.scanBtn, this.captureBtn, save, sep(),
+      this.collageBtn, this.blendSelect, this.clearBtn, sep(),
+      this.scanBtn, this.captureBtn, this.recBtn, save, sep(),
       this.sizeSelect, this.customSize, this.sizeInfo, spacer(), tabs,
     );
     this.setupKeyboard();
@@ -284,6 +335,14 @@ export class UI {
     this.captureBtn.disabled = false;
     for (const b of this.selButtons) b.disabled = glass.selectedId === null;
     this.undoBtn.disabled = this.history.length < 2;
+    this.collageBtn.classList.toggle('on', scanner.persist);
+    this.blendSelect.hidden = !scanner.persist;
+    this.blendSelect.value = scanner.blend;
+    this.clearBtn.hidden = !scanner.persist;
+    const rec = this.recorder;
+    this.recBtn.disabled = !videoSupported();
+    this.recBtn.classList.toggle('on', rec.armed || rec.active);
+    this.recBtn.textContent = rec.state === 'recording' ? 'Recording' : rec.state === 'holding' ? 'Holding' : 'Record';
     const inches = `${(scanner.width / scanner.outputDpi).toFixed(1)}×${(scanner.height / scanner.outputDpi).toFixed(1)}"`;
     this.sizeInfo.textContent = `${scanner.width}×${scanner.height} · ${scanner.outputDpi} dpi · ${inches}`;
     this.tabButtons[0]?.classList.toggle('on', this.mobileTab === 'glass');
@@ -292,9 +351,15 @@ export class UI {
 
   toggleScan(): void {
     const s = this.deps.scanner;
-    if (s.scanning) s.stop();
-    else {
+    if (s.scanning) {
+      s.stop();
+      // A stopped pass is still a take, so the clip gets its hold and saves.
+      this.recorder.hold();
+    } else {
       this.syncScanSettings();
+      if (this.recorder.armed && !this.recorder.active) {
+        this.recorder.begin(s.width, s.height);
+      }
       s.start();
       if (isMobile()) this.setMobileTab('output');
     }
@@ -544,6 +609,18 @@ export class UI {
   /** Called every animation frame. */
   draw(): void {
     this.drawGlass();
+    if (this.recorder.state === 'recording') {
+      // Redraw every frame so the blit below always reads real pixels: the
+      // WebGL drawing buffer is not preserved once a frame is composited.
+      this.drawOutput();
+      this.outputDirty = false;
+      this.recorder.frame(this.effects ? this.outputView : this.deps.scanner.output);
+      return;
+    }
+    // Through the closing hold the picture is finished, so the shader is left
+    // alone and the recorder just re-stamps its last frame to keep the
+    // capture stream producing. Normal drawing carries on below.
+    this.recorder.tick();
     if (this.outputDirty || this.effects?.needsRender) {
       this.drawOutput();
       this.outputDirty = false;
