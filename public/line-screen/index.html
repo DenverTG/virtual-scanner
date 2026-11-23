@@ -137,7 +137,8 @@ h1{font-size:30px}
       <div class="ctl"><label for="minW">Thinnest</label><output id="o-minW" for="minW"></output><input type="range" id="minW" min="0" max="60" step="1"></div>
       <div class="ctl"><label for="maxW">Thickest</label><output id="o-maxW" for="maxW"></output><input type="range" id="maxW" min="10" max="100" step="1"></div>
       <div class="ctl"><label for="taper">Taper between steps</label><output id="o-taper" for="taper"></output><input type="range" id="taper" min="0" max="90" step="1"></div>
-      <p class="hint">Taper is the angled shoulder's length, as a % of row height.</p>
+      <div class="ctl"><label for="round">Taper roundness</label><output id="o-round" for="round"></output><input type="range" id="round" min="0" max="100" step="1"></div>
+      <p class="hint">Taper is the angled shoulder's length, as a % of row height. Roundness softens the corners at each step, with or without taper.</p>
     </div>
     <div class="sec">
       <h2>Color</h2>
@@ -150,16 +151,16 @@ h1{font-size:30px}
 <script>
 {
 const $ = id => document.getElementById(id);
-const DEF = {cols:46,rows:30,levels:5,minW:10,maxW:80,taper:18,bright:0,contrast:0,invert:false,norm:true,ink:'#1c1a17',paper:'#cbb894',bg:true};
+const DEF = {cols:46,rows:30,levels:5,minW:10,maxW:80,taper:18,round:0,bright:0,contrast:0,invert:false,norm:true,ink:'#1c1a17',paper:'#cbb894',bg:true};
 const PRESETS = {
-  kraft:{cols:46,rows:30,levels:5,minW:10,maxW:80,taper:18,invert:false,ink:'#1c1a17',paper:'#cbb894'},
-  fine:{cols:96,rows:64,levels:6,minW:6,maxW:78,taper:0,invert:false,ink:'#111111',paper:'#ffffff'},
-  bold:{cols:24,rows:14,levels:3,minW:14,maxW:92,taper:40,invert:true,ink:'#f2ede3',paper:'#151412'}
+  kraft:{cols:46,rows:30,levels:5,minW:10,maxW:80,taper:18,round:0,invert:false,ink:'#1c1a17',paper:'#cbb894'},
+  fine:{cols:96,rows:64,levels:6,minW:6,maxW:78,taper:0,round:0,invert:false,ink:'#111111',paper:'#ffffff'},
+  bold:{cols:24,rows:14,levels:3,minW:14,maxW:92,taper:40,round:60,invert:true,ink:'#f2ede3',paper:'#151412'}
 };
-const NUM = ['cols','rows','levels','minW','maxW','taper','bright','contrast'];
+const NUM = ['cols','rows','levels','minW','maxW','taper','round','bright','contrast'];
 const BOOL = ['invert','norm','bg'];
 const COL = ['ink','paper'];
-const FMT = {minW:v=>v+'%',maxW:v=>v+'%',taper:v=>v+'%',bright:v=>(v>0?'+':'')+v,contrast:v=>(v>0?'+':'')+v};
+const FMT = {minW:v=>v+'%',maxW:v=>v+'%',taper:v=>v+'%',round:v=>v+'%',bright:v=>(v>0?'+':'')+v,contrast:v=>(v>0?'+':'')+v};
 const KEY = 'line-screen-v1';
 const stage = $('stage'), art = $('art'), stats = $('stats');
 let S = {...DEF};
@@ -262,14 +263,30 @@ function cells() {
 
 const fx = v => String(Math.round(v * 100) / 100);
 
-/* one closed polygon per unbroken run of a column; tapers centred on each step */
+/* one closed shape per unbroken run of a column; tapers centred on each step,
+   step corners filleted with quadratic curves (cut length clamped to half of each edge) */
 function geom(L) {
   const C = S.cols, R = S.rows, W = 1200, H = Math.round(W * src.h / src.w * 100) / 100;
   const p = W / C, rh = H / R, n = S.levels;
   const lo = S.minW / 100 * p, hi = S.maxW / 100 * p;
   const wid = l => lo + (hi - lo) * l / (n - 1);
-  const ht = S.taper / 100 * rh / 2;
-  const paths = []; let pts = 0;
+  const ht = S.taper / 100 * rh / 2, rad = S.round / 100 * rh / 2;
+  let pts = 0;
+  const P = ([x, y]) => fx(x) + ' ' + fx(y);
+  const side = q => {
+    let o = '';
+    for (let i = 1; i < q.length - 1; i++) {
+      const [px, py] = q[i - 1], [vx, vy] = q[i], [nx, ny] = q[i + 1];
+      const li = Math.hypot(vx - px, vy - py), lo = Math.hypot(nx - vx, ny - vy);
+      const a = Math.min(rad, li / 2), b = Math.min(rad, lo / 2);
+      if (a < 0.01 || b < 0.01) { o += 'L' + P(q[i]); pts++; continue; }
+      o += 'L' + P([vx + (px - vx) * a / li, vy + (py - vy) * a / li]) + 'Q' + P(q[i]) + ' ' + P([vx + (nx - vx) * b / lo, vy + (ny - vy) * b / lo]);
+      pts += 2;
+    }
+    pts++;
+    return o + 'L' + P(q[q.length - 1]);
+  };
+  const paths = [];
   for (let c = 0; c < C; c++) {
     const cx = (c + 0.5) * p, runs = [];
     for (let r = 0; r < R; r++) {
@@ -287,9 +304,9 @@ function geom(L) {
       }
       const z = seg[seg.length - 1];
       right.push([cx + z.w / 2, z.y1]);
-      const all = right.concat(right.map(([x, y]) => [2 * cx - x, y]).reverse());
-      paths.push('M' + all.map(([x, y]) => fx(x) + ' ' + fx(y)).join('L') + 'Z');
-      pts += all.length; seg = [];
+      const left = right.map(([x, y]) => [2 * cx - x, y]).reverse();
+      paths.push('M' + P(right[0]) + side(right) + 'L' + P(left[0]) + side(left) + 'Z');
+      pts += 2; seg = [];
     };
     for (const run of runs) { if (run.w < 0.01) flush(); else seg.push(run); }
     flush();
