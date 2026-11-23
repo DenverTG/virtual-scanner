@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Line Screen Generator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;700;800&display=swap" rel="stylesheet">
+<style>
+/* VOICE work tool, quiet and exact
+   IDEA a print shop's line-screen camera: the image goes in, film comes out on a light table
+   PICTURE the live line screen, drawn large on its own paper
+   COLOUR white ground, near-black ink, grey light table, kraft artboard by default, signal red only for focus and errors
+   TYPE Archivo 800 for the title, Archivo for everything else
+   LAYOUT laptop: header, artboard left, 340px control rail right; phone: title, sticky artboard, controls */
+:root{color-scheme:light dark;--bg:light-dark(#ffffff,#151513);--ink:light-dark(#161514,#ecebe6);--muted:light-dark(#5f5c57,#a8a59e);--rule:light-dark(#dedbd4,#2e2d2a);--table:light-dark(#ecebe6,#0c0c0b);--hover:light-dark(#f3f2ee,#1f1e1b);--accent:#e4002b}
+:root[data-theme=light]{color-scheme:light}
+:root[data-theme=dark]{color-scheme:dark}
+*{box-sizing:border-box;min-width:0}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 Archivo,system-ui,-apple-system,"Segoe UI",sans-serif;overflow-x:clip;display:flex;flex-direction:column}
+.top{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px 24px;padding:18px max(2.5vw,16px);border-bottom:1px solid var(--rule)}
+h1{margin:0;font-size:36px;font-weight:800;line-height:1.05;letter-spacing:-.02em}
+.top p{margin:6px 0 0;color:var(--muted);font-size:14px;max-width:62ch}
+.acts{display:flex;gap:8px;flex-wrap:wrap}
+main{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 340px;grid-template-rows:minmax(0,1fr)}
+.view{display:flex;flex-direction:column;background:var(--table);min-height:0}
+.stage{flex:1;min-height:0;position:relative;display:grid;place-items:center;padding:28px;overflow:hidden}
+#art svg{display:block;box-shadow:0 1px 2px rgb(0 0 0/.18),0 0 0 1px rgb(0 0 0/.06)}
+.drop{position:absolute;inset:12px;border:2px dashed var(--ink);display:none;place-items:center;font-weight:700;background:color-mix(in srgb,var(--table) 82%,transparent)}
+.stage.drag .drop{display:grid}
+.cap{display:flex;flex-wrap:wrap;justify-content:space-between;gap:2px 16px;padding:10px 16px;font-size:13px;color:var(--muted);border-top:1px solid var(--rule)}
+#srcname{flex:1 1 10em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#stats{flex:none;max-width:100%;text-align:right;font-variant-numeric:tabular-nums}
+#stats.err{color:var(--accent)}
+.panel{overflow-y:auto;border-left:1px solid var(--rule)}
+.sec{padding:18px 24px 20px;border-bottom:1px solid var(--rule)}
+.sec:last-child{border-bottom:0}
+h2{margin:0 0 4px;font-size:14px;font-weight:700}
+.hint{margin:0 0 4px;font-size:13px;color:var(--muted)}
+.ctl{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;margin-top:8px}
+.ctl label{font-size:14px;font-weight:500}
+.ctl output{font-size:14px;font-variant-numeric:tabular-nums;color:var(--muted)}
+.ctl input{grid-column:1/-1}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:36px;margin:0;background:transparent;cursor:pointer;--p:50%}
+input[type=range]::-webkit-slider-runnable-track{height:3px;background:linear-gradient(to right,var(--ink) var(--p),var(--rule) var(--p))}
+input[type=range]::-moz-range-track{height:3px;background:var(--rule)}
+input[type=range]::-moz-range-progress{height:3px;background:var(--ink)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;box-sizing:border-box;width:20px;height:20px;margin-top:-8.5px;border-radius:50%;background:var(--ink);border:3px solid var(--bg);box-shadow:0 0 0 1px var(--ink)}
+input[type=range]::-moz-range-thumb{box-sizing:border-box;width:20px;height:20px;border-radius:50%;background:var(--ink);border:3px solid var(--bg);box-shadow:0 0 0 1px var(--ink)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.btn{font:inherit;font-size:15px;font-weight:700;min-height:44px;padding:0 16px;border:1px solid var(--ink);border-radius:2px;background:var(--bg);color:var(--ink);cursor:pointer;white-space:nowrap}
+.btn:hover{background:var(--hover)}
+.btn:active{transform:translateY(1px)}
+.btn:disabled{opacity:.35;cursor:default;transform:none;background:var(--bg)}
+.btn.pri{background:var(--ink);color:var(--bg)}
+.btn.pri:hover{background:color-mix(in srgb,var(--ink) 84%,var(--bg))}
+.btn[hidden]{display:none}
+.presets{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.seg{font:inherit;font-size:14px;font-weight:500;min-height:44px;padding:0 14px;border:1px solid var(--rule);border-radius:2px;background:var(--bg);color:var(--ink);cursor:pointer}
+.seg:hover{border-color:var(--ink)}
+.seg[aria-pressed=true]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.src{display:flex;gap:14px;align-items:center;margin:6px 0 4px}
+#thumb{width:64px;height:64px;object-fit:contain;background:var(--table);flex:none}
+.src p{margin:6px 0 0}
+.chk{display:flex;align-items:center;gap:10px;min-height:44px;font-size:14px;font-weight:500;cursor:pointer}
+.chk input{width:18px;height:18px;margin:0;accent-color:var(--ink)}
+.sw{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:12px;min-height:48px;font-size:14px;font-weight:500}
+.sw span{font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums;text-transform:uppercase}
+.sw input{width:52px;height:36px;padding:2px;border:1px solid var(--rule);border-radius:2px;background:var(--bg);cursor:pointer}
+.vh{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+@media(max-width:900px){main{grid-template-columns:minmax(0,1fr) 300px}.sec{padding:16px 20px 18px}}
+@media(max-width:640px){
+html,body{height:auto}
+body{display:block}
+main{display:block}
+.view{position:sticky;top:0;z-index:2;height:48svh;border-bottom:1px solid var(--rule)}
+.stage{padding:14px}
+.cap{padding:8px 16px}
+.panel{border-left:0;overflow:visible}
+.top{padding:14px 16px}
+h1{font-size:30px}
+.sec{padding:16px}
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <div>
+    <h1>Line screen</h1>
+    <p>Turns an image into stepped vertical lines. Each column exports as one closed vector shape, ready for Illustrator or Figma.</p>
+  </div>
+  <div class="acts">
+    <button id="undo" class="btn" type="button" disabled>Undo</button>
+    <button id="reset" class="btn" type="button">Reset</button>
+    <button id="copy" class="btn" type="button">Copy SVG</button>
+    <button id="dl" class="btn pri" type="button" hidden>Download SVG</button>
+  </div>
+</header>
+<main>
+  <section class="view" aria-label="Preview">
+    <div class="stage" id="stage"><div id="art"></div><div class="drop">Drop image</div></div>
+    <div class="cap"><span id="srcname">Sample: shaded sphere. Drop, paste or choose your own image.</span><span id="stats" aria-live="polite"></span></div>
+  </section>
+  <aside class="panel" aria-label="Controls">
+    <div class="sec">
+      <h2 id="pl">Presets</h2>
+      <div class="presets" role="group" aria-labelledby="pl">
+        <button class="seg" type="button" data-p="kraft">Kraft</button>
+        <button class="seg" type="button" data-p="fine">Fine</button>
+        <button class="seg" type="button" data-p="bold">Bold</button>
+      </div>
+    </div>
+    <div class="sec">
+      <h2>Image</h2>
+      <div class="src">
+        <canvas id="thumb" width="128" height="128" aria-label="Source image"></canvas>
+        <div><button id="pick" class="btn" type="button">Choose image</button><p class="hint">Or drop or paste one anywhere.</p></div>
+      </div>
+      <input type="file" id="file" accept="image/*" class="vh" tabindex="-1" aria-hidden="true">
+      <label class="chk"><input type="checkbox" id="norm"> Stretch tones to full range</label>
+      <label class="chk"><input type="checkbox" id="invert"> Invert (light areas get thick lines)</label>
+      <div class="ctl"><label for="bright">Brightness</label><output id="o-bright" for="bright"></output><input type="range" id="bright" min="-50" max="50" step="1"></div>
+      <div class="ctl"><label for="contrast">Contrast</label><output id="o-contrast" for="contrast"></output><input type="range" id="contrast" min="-40" max="100" step="1"></div>
+    </div>
+    <div class="sec">
+      <h2>Grid</h2>
+      <p class="hint">Fewer rows give longer, more graphic steps.</p>
+      <div class="ctl"><label for="cols">Columns</label><output id="o-cols" for="cols"></output><input type="range" id="cols" min="6" max="160" step="1"></div>
+      <div class="ctl"><label for="rows">Rows</label><output id="o-rows" for="rows"></output><input type="range" id="rows" min="4" max="120" step="1"></div>
+      <div class="ctl"><label for="levels">Line widths</label><output id="o-levels" for="levels"></output><input type="range" id="levels" min="2" max="8" step="1"></div>
+    </div>
+    <div class="sec">
+      <h2>Line</h2>
+      <p class="hint">Widths are a % of column spacing. Keep the thinnest above 0 for unbroken lines.</p>
+      <div class="ctl"><label for="minW">Thinnest</label><output id="o-minW" for="minW"></output><input type="range" id="minW" min="0" max="60" step="1"></div>
+      <div class="ctl"><label for="maxW">Thickest</label><output id="o-maxW" for="maxW"></output><input type="range" id="maxW" min="10" max="100" step="1"></div>
+      <div class="ctl"><label for="taper">Taper between steps</label><output id="o-taper" for="taper"></output><input type="range" id="taper" min="0" max="90" step="1"></div>
+      <p class="hint">Taper is the angled shoulder's length, as a % of row height.</p>
+    </div>
+    <div class="sec">
+      <h2>Color</h2>
+      <label class="sw" for="ink">Ink <span id="h-ink"></span><input type="color" id="ink"></label>
+      <label class="sw" for="paper">Paper <span id="h-paper"></span><input type="color" id="paper"></label>
+      <label class="chk"><input type="checkbox" id="bg"> Include paper in export</label>
+    </div>
+  </aside>
+</main>
+<script>
+{
+const $ = id => document.getElementById(id);
+const DEF = {cols:46,rows:30,levels:5,minW:10,maxW:80,taper:18,bright:0,contrast:0,invert:false,norm:true,ink:'#1c1a17',paper:'#cbb894',bg:true};
+const PRESETS = {
+  kraft:{cols:46,rows:30,levels:5,minW:10,maxW:80,taper:18,invert:false,ink:'#1c1a17',paper:'#cbb894'},
+  fine:{cols:96,rows:64,levels:6,minW:6,maxW:78,taper:0,invert:false,ink:'#111111',paper:'#ffffff'},
+  bold:{cols:24,rows:14,levels:3,minW:14,maxW:92,taper:40,invert:true,ink:'#f2ede3',paper:'#151412'}
+};
+const NUM = ['cols','rows','levels','minW','maxW','taper','bright','contrast'];
+const BOOL = ['invert','norm','bg'];
+const COL = ['ink','paper'];
+const FMT = {minW:v=>v+'%',maxW:v=>v+'%',taper:v=>v+'%',bright:v=>(v>0?'+':'')+v,contrast:v=>(v>0?'+':'')+v};
+const KEY = 'line-screen-v1';
+const stage = $('stage'), art = $('art'), stats = $('stats');
+let S = {...DEF};
+let src = null, G = null, raf = 0, sayT = 0, dl = null, dc = 0;
+const hist = [];
+
+try { const saved = JSON.parse(localStorage.getItem(KEY) || 'null'); if (saved) for (const k in DEF) if (k in saved) S[k] = saved[k]; } catch (e) {}
+
+function sanitize() {
+  for (const k of NUM) { const el = $(k); let v = Math.round(+S[k]); if (!isFinite(v)) v = DEF[k]; S[k] = Math.min(+el.max, Math.max(+el.min, v)); }
+  for (const k of BOOL) S[k] = !!S[k];
+  for (const k of COL) if (!/^#[0-9a-f]{6}$/i.test(S[k])) S[k] = DEF[k];
+}
+
+function syncOne(k) {
+  const el = $(k);
+  if (NUM.includes(k)) {
+    el.value = S[k];
+    el.style.setProperty('--p', ((S[k] - el.min) / (el.max - el.min) * 100) + '%');
+    $('o-' + k).textContent = (FMT[k] || String)(S[k]);
+  } else if (BOOL.includes(k)) el.checked = S[k];
+  else { el.value = S[k]; $('h-' + k).textContent = S[k]; }
+}
+function syncUI() { for (const k in DEF) syncOne(k); markPresets(); $('undo').disabled = !hist.length; }
+function markPresets() {
+  for (const b of document.querySelectorAll('.seg')) {
+    const P = PRESETS[b.dataset.p];
+    b.setAttribute('aria-pressed', String(Object.keys(P).every(k => S[k] === P[k])));
+  }
+}
+let last = '';
+function commit() {
+  const j = JSON.stringify(S);
+  if (j === last) return;
+  if (last) { hist.push(last); if (hist.length > 60) hist.shift(); }
+  last = j;
+  try { localStorage.setItem(KEY, j); } catch (e) {}
+  $('undo').disabled = !hist.length;
+  markPresets();
+}
+function undo() {
+  if (!hist.length) return;
+  last = hist.pop(); S = JSON.parse(last);
+  try { localStorage.setItem(KEY, last); } catch (e) {}
+  syncUI(); render();
+}
+
+/* source image -> luminance summed-area table */
+function loadSource(img, label) {
+  const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
+  const k = Math.min(1, 1024 / Math.max(iw, ih));
+  const w = Math.max(1, Math.round(iw * k)), h = Math.max(1, Math.round(ih * k));
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const x = c.getContext('2d', {willReadFrequently: true});
+  x.imageSmoothingQuality = 'high'; x.drawImage(img, 0, 0, w, h);
+  const d = x.getImageData(0, 0, w, h).data, W1 = w + 1;
+  const sat = new Float64Array(W1 * (h + 1));
+  for (let y = 0; y < h; y++) {
+    let row = 0;
+    for (let xx = 0; xx < w; xx++) {
+      const i = (y * w + xx) * 4, a = d[i + 3] / 255;
+      row += ((0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]) / 255) * a + (1 - a);
+      sat[(y + 1) * W1 + xx + 1] = sat[y * W1 + xx + 1] + row;
+    }
+  }
+  src = {w, h, sat};
+  $('srcname').textContent = label;
+  const t = $('thumb'), tk = Math.min(128 / w, 128 / h);
+  t.width = Math.max(1, Math.round(w * tk)); t.height = Math.max(1, Math.round(h * tk));
+  t.getContext('2d').drawImage(c, 0, 0, t.width, t.height);
+}
+
+/* per-cell tone -> width level (0 = thinnest) */
+function cells() {
+  const {w, h, sat} = src, C = S.cols, R = S.rows, W1 = w + 1;
+  const v = new Float32Array(C * R);
+  for (let r = 0; r < R; r++) {
+    const y0 = Math.min(h - 1, Math.floor(r * h / R)), y1 = Math.max(y0 + 1, Math.floor((r + 1) * h / R));
+    for (let c = 0; c < C; c++) {
+      const x0 = Math.min(w - 1, Math.floor(c * w / C)), x1 = Math.max(x0 + 1, Math.floor((c + 1) * w / C));
+      const s = sat[y1 * W1 + x1] - sat[y0 * W1 + x1] - sat[y1 * W1 + x0] + sat[y0 * W1 + x0];
+      v[r * C + c] = s / ((x1 - x0) * (y1 - y0));
+    }
+  }
+  if (S.norm) {
+    let lo = 1, hi = 0;
+    for (const t of v) { if (t < lo) lo = t; if (t > hi) hi = t; }
+    const span = hi - lo;
+    if (span > 1e-3) for (let i = 0; i < v.length; i++) v[i] = (v[i] - lo) / span;
+  }
+  const f = 1 + S.contrast / 50, b = S.bright / 100, n = S.levels, L = new Uint8Array(C * R);
+  for (let i = 0; i < v.length; i++) {
+    let t = (v[i] - 0.5) * f + 0.5 + b;
+    if (S.invert) t = 1 - t;
+    t = Math.min(1, Math.max(0, t));
+    L[i] = Math.min(n - 1, Math.floor((1 - t) * n));
+  }
+  return L;
+}
+
+const fx = v => String(Math.round(v * 100) / 100);
+
+/* one closed polygon per unbroken run of a column; tapers centred on each step */
+function geom(L) {
+  const C = S.cols, R = S.rows, W = 1200, H = Math.round(W * src.h / src.w * 100) / 100;
+  const p = W / C, rh = H / R, n = S.levels;
+  const lo = S.minW / 100 * p, hi = S.maxW / 100 * p;
+  const wid = l => lo + (hi - lo) * l / (n - 1);
+  const ht = S.taper / 100 * rh / 2;
+  const paths = []; let pts = 0;
+  for (let c = 0; c < C; c++) {
+    const cx = (c + 0.5) * p, runs = [];
+    for (let r = 0; r < R; r++) {
+      const w = wid(L[r * C + c]), prev = runs[runs.length - 1];
+      if (prev && Math.abs(prev.w - w) < 1e-6) prev.y1 = (r + 1) * rh;
+      else runs.push({w, y0: r * rh, y1: (r + 1) * rh});
+    }
+    let seg = [];
+    const flush = () => {
+      if (!seg.length) return;
+      const right = [[cx + seg[0].w / 2, seg[0].y0]];
+      for (let i = 0; i < seg.length - 1; i++) {
+        const a = seg[i], b = seg[i + 1], y = a.y1;
+        right.push([cx + a.w / 2, y - ht], [cx + b.w / 2, y + ht]);
+      }
+      const z = seg[seg.length - 1];
+      right.push([cx + z.w / 2, z.y1]);
+      const all = right.concat(right.map(([x, y]) => [2 * cx - x, y]).reverse());
+      paths.push('M' + all.map(([x, y]) => fx(x) + ' ' + fx(y)).join('L') + 'Z');
+      pts += all.length; seg = [];
+    };
+    for (const run of runs) { if (run.w < 0.01) flush(); else seg.push(run); }
+    flush();
+  }
+  return {W, H, paths, pts};
+}
+
+function svgStr(g, withPaper, nl) {
+  const br = nl ? '\n' : '';
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${g.W} ${g.H}" width="${g.W}" height="${g.H}">` + br +
+    (withPaper ? `<rect width="${g.W}" height="${g.H}" fill="${S.paper}"/>` + br : '') +
+    `<g fill="${S.ink}">` + br + g.paths.map(d => `<path d="${d}"/>`).join(br) + br + '</g>' + br + '</svg>' + br;
+}
+
+function fit() {
+  const sv = art.firstElementChild;
+  if (!sv || !G) return;
+  const cs = getComputedStyle(stage);
+  const aw = stage.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+  const ah = stage.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+  const k = Math.max(0.01, Math.min(aw / G.W, ah / G.H));
+  sv.style.width = (G.W * k) + 'px'; sv.style.height = (G.H * k) + 'px';
+}
+const ro = new ResizeObserver(fit);
+ro.observe(stage);
+
+function showStats() {
+  if (sayT || !G) return;
+  stats.classList.remove('err');
+  stats.textContent = `${G.paths.length.toLocaleString()} shapes, ${G.pts.toLocaleString()} points`;
+}
+function say(msg, err) {
+  clearTimeout(sayT);
+  stats.textContent = msg; stats.classList.toggle('err', !!err);
+  sayT = setTimeout(() => { sayT = 0; showStats(); }, 3200);
+}
+function draw() {
+  if (!src) return;
+  G = geom(cells());
+  art.innerHTML = svgStr(G, true, false);
+  fit(); showStats();
+}
+function render() { if (!raf) raf = requestAnimationFrame(() => { raf = 0; draw(); }); }
+
+function loadFile(f) {
+  if (!f) return;
+  if (f.type && !f.type.startsWith('image/')) { say('That file isn’t an image. Try PNG, JPG or WebP.', true); return; }
+  const url = URL.createObjectURL(f), im = new Image();
+  im.onload = () => { loadSource(im, `${f.name || 'Pasted image'}, ${im.naturalWidth} × ${im.naturalHeight}`); URL.revokeObjectURL(url); draw(); };
+  im.onerror = () => { URL.revokeObjectURL(url); say('Couldn’t read that image. If it’s HEIC, save it as JPG first.', true); };
+  im.src = url;
+}
+
+function sample() {
+  const c = document.createElement('canvas'); c.width = 600; c.height = 760;
+  const x = c.getContext('2d');
+  let g = x.createLinearGradient(0, 0, 0, 760);
+  g.addColorStop(0, '#ececec'); g.addColorStop(1, '#a4a4a4');
+  x.fillStyle = g; x.fillRect(0, 0, 600, 760);
+  x.save(); x.translate(340, 625); x.scale(1, 0.22);
+  g = x.createRadialGradient(0, 0, 0, 0, 0, 250);
+  g.addColorStop(0, 'rgba(0,0,0,.8)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+  x.fillStyle = g; x.fillRect(-260, -260, 520, 520); x.restore();
+  g = x.createRadialGradient(225, 255, 8, 300, 360, 225);
+  g.addColorStop(0, '#ffffff'); g.addColorStop(0.45, '#9b9b9b'); g.addColorStop(1, '#0b0b0b');
+  x.fillStyle = g; x.beginPath(); x.arc(300, 360, 215, 0, Math.PI * 2); x.fill();
+  return c;
+}
+
+/* controls */
+for (const k of NUM) {
+  const el = $(k);
+  el.addEventListener('input', () => {
+    S[k] = +el.value;
+    if (k === 'minW' && S.minW > S.maxW) { S.maxW = Math.max(S.minW, +$('maxW').min); syncOne('maxW'); }
+    if (k === 'maxW' && S.maxW < S.minW) { S.minW = S.maxW; syncOne('minW'); }
+    syncOne(k); markPresets(); render();
+  });
+  el.addEventListener('change', commit);
+}
+for (const k of BOOL) $(k).addEventListener('change', () => { S[k] = $(k).checked; render(); commit(); });
+for (const k of COL) {
+  $(k).addEventListener('input', () => { S[k] = $(k).value; $('h-' + k).textContent = S[k]; markPresets(); render(); });
+  $(k).addEventListener('change', commit);
+}
+for (const b of document.querySelectorAll('.seg')) {
+  b.addEventListener('click', () => { Object.assign(S, PRESETS[b.dataset.p]); syncUI(); render(); commit(); });
+}
+$('reset').addEventListener('click', () => { S = {...DEF}; syncUI(); render(); commit(); });
+$('undo').addEventListener('click', undo);
+document.addEventListener('keydown', e => {
+  if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === 'z') { e.preventDefault(); undo(); }
+});
+$('pick').addEventListener('click', () => $('file').click());
+$('file').addEventListener('change', e => { loadFile(e.target.files[0]); e.target.value = ''; });
+document.addEventListener('paste', e => {
+  const it = [...(e.clipboardData?.items || [])].find(i => i.type.startsWith('image/'));
+  if (it) { e.preventDefault(); loadFile(it.getAsFile()); }
+});
+addEventListener('dragenter', e => { if ([...(e.dataTransfer?.types || [])].includes('Files')) { dc++; stage.classList.add('drag'); } });
+addEventListener('dragleave', () => { if (--dc <= 0) { dc = 0; stage.classList.remove('drag'); } });
+addEventListener('dragover', e => e.preventDefault());
+addEventListener('drop', e => { e.preventDefault(); dc = 0; stage.classList.remove('drag'); loadFile(e.dataTransfer?.files?.[0]); });
+
+const fileName = () => `line-screen-${S.cols}x${S.rows}.svg`;
+const inClaude = !!(window.claude && window.claude.use);
+function copyFallback(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text; ta.setAttribute('readonly', ''); ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+  document.body.appendChild(ta); ta.select();
+  let ok = false; try { ok = document.execCommand('copy'); } catch (e) {}
+  ta.remove(); return ok;
+}
+function saveLocal(name, text) {
+  const url = URL.createObjectURL(new Blob([text], {type: 'image/svg+xml'}));
+  const a = document.createElement('a'); a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+$('copy').addEventListener('click', async () => {
+  if (!G) return;
+  const text = svgStr(G, S.bg, true);
+  try { await navigator.clipboard.writeText(text); say('SVG code copied.'); }
+  catch (e) { if (copyFallback(text)) say('SVG code copied.'); else say('Copy was blocked here.', true); }
+});
+if (!inClaude) $('dl').hidden = false;
+$('dl').addEventListener('click', async () => {
+  if (!G) return;
+  if (!inClaude) { saveLocal(fileName(), svgStr(G, S.bg, true)); say('Saved ' + fileName()); return; }
+  if (!dl) return;
+  try { await dl.save({filename: fileName(), data: svgStr(G, S.bg, true)}); say('Saved ' + fileName()); }
+  catch (e) {
+    const c = e && e.code;
+    if (c === 'declined') say('Download cancelled.');
+    else if (c === 'rate_limited') say('A save prompt is already open.', true);
+    else { say('Download isn’t available here. Use Copy SVG.', true); $('dl').hidden = true; }
+  }
+});
+(async () => {
+  try { if (window.claude && window.claude.use) { dl = await window.claude.use('downloads'); if (dl) $('dl').hidden = false; } } catch (e) {}
+})();
+
+/* boot */
+sanitize();
+last = JSON.stringify(S);
+syncUI();
+loadSource(sample(), 'Sample: shaded sphere. Drop, paste or choose your own image.');
+draw();
+}
+</script>
+</body>
+</html>
